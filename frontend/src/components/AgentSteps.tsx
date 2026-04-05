@@ -1,11 +1,11 @@
 import { cn } from "@/lib/utils";
 import type { BuildStatus } from "@/lib/types";
-import { CheckCircle, Circle, AlertCircle, Loader, Terminal } from "lucide-react";
+import { CheckCircle, Circle, AlertCircle, Loader, Terminal, Brain, Search, ImageIcon } from "lucide-react";
 
 const PIPELINE_STEPS: { key: string; title: string; description: string }[] = [
-  { key: "planning", title: "Planning", description: "Analyzing the request and planning the app structure" },
-  { key: "coding", title: "Coding", description: "Generating complete HTML/CSS/JS with GLM" },
-  { key: "reviewing", title: "Reviewing", description: "Self-reviewing the code for bugs and completeness" },
+  { key: "planning", title: "Planning", description: "Analyzing request and planning architecture with GLM 5.1" },
+  { key: "coding", title: "Coding", description: "Generating complete HTML/CSS/JS with thinking mode" },
+  { key: "reviewing", title: "Reviewing", description: "Self-reviewing code for bugs and completeness" },
   { key: "deploying", title: "Deploying", description: "Deploying to static hosting and generating URL" },
 ];
 
@@ -20,7 +20,6 @@ function getStepStatus(
 ): "pending" | "active" | "done" | "failed" {
   if (buildStatus === "failed") {
     const stepIdx = PIPELINE_STEPS.findIndex((s) => s.key === stepKey);
-
     if (failedAtStatus) {
       const failedIdx = PIPELINE_STEPS.findIndex((s) => s.key === failedAtStatus);
       if (failedIdx !== -1) {
@@ -29,11 +28,8 @@ function getStepStatus(
         return "pending";
       }
     }
-
-    // No info about where it failed — mark first step as failed
     return stepIdx === 0 ? "failed" : "pending";
   }
-
   if (buildStatus === "deployed") return "done";
 
   const buildIdx = STATUS_ORDER.indexOf(buildStatus);
@@ -42,6 +38,14 @@ function getStepStatus(
   if (stepIdx < buildIdx - 1) return "done";
   if (stepIdx === buildIdx - 1) return "active";
   return "pending";
+}
+
+/** Detect special step prefixes for badge rendering */
+function getStepBadge(step: string): { icon: typeof Brain; label: string; color: string } | null {
+  if (step.startsWith("[thinking]")) return { icon: Brain, label: "Thinking", color: "text-purple-400 bg-purple-950/50 border-purple-800" };
+  if (step.startsWith("[research]")) return { icon: Search, label: "Web Search", color: "text-blue-400 bg-blue-950/50 border-blue-800" };
+  if (step.startsWith("[image]")) return { icon: ImageIcon, label: "CogView-4", color: "text-amber-400 bg-amber-950/50 border-amber-800" };
+  return null;
 }
 
 interface AgentStepsProps {
@@ -59,7 +63,6 @@ export function AgentSteps({ buildStatus, failedAtStatus, rawSteps }: AgentSteps
 
         return (
           <div key={pipelineStep.key} className="flex gap-4">
-            {/* Icon + line */}
             <div className="flex flex-col items-center">
               <StepIcon status={status} />
               {i < PIPELINE_STEPS.length - 1 && (
@@ -73,7 +76,6 @@ export function AgentSteps({ buildStatus, failedAtStatus, rawSteps }: AgentSteps
               )}
             </div>
 
-            {/* Content */}
             <div className="pb-6 flex-1 min-w-0">
               <div
                 className={cn(
@@ -99,7 +101,7 @@ export function AgentSteps({ buildStatus, failedAtStatus, rawSteps }: AgentSteps
         );
       })}
 
-      {/* Raw pipeline log */}
+      {/* Raw pipeline log with badges */}
       {rawSteps && rawSteps.length > 0 && (
         <div className="mt-4 border-t border-neutral-800 pt-4">
           <div className="mb-2 flex items-center gap-1.5">
@@ -108,18 +110,35 @@ export function AgentSteps({ buildStatus, failedAtStatus, rawSteps }: AgentSteps
               Pipeline Log
             </span>
           </div>
-          <div className="max-h-48 overflow-y-auto rounded border border-neutral-800 bg-neutral-950 p-3">
-            {rawSteps.map((step, i) => (
-              <div key={i} className="flex gap-2 text-xs leading-relaxed">
-                <span className="shrink-0 font-mono text-neutral-700">{String(i + 1).padStart(2, "0")}</span>
-                <span className={cn(
-                  "font-mono",
-                  step.toLowerCase().includes("failed") ? "text-red-400" : "text-neutral-500"
-                )}>
-                  {step}
-                </span>
-              </div>
-            ))}
+          <div className="max-h-64 overflow-y-auto rounded border border-neutral-800 bg-neutral-950 p-3 space-y-1">
+            {rawSteps.map((step, i) => {
+              const badge = getStepBadge(step);
+              const displayText = step.replace(/^\[(thinking|research|image)\]\s*/, "");
+
+              return (
+                <div key={i} className="flex gap-2 text-xs leading-relaxed">
+                  <span className="shrink-0 font-mono text-neutral-700 select-none">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  {badge ? (
+                    <span className="flex items-center gap-1.5 flex-wrap">
+                      <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px]", badge.color)}>
+                        <badge.icon className="h-2.5 w-2.5" />
+                        {badge.label}
+                      </span>
+                      <span className="font-mono text-neutral-500">{displayText}</span>
+                    </span>
+                  ) : (
+                    <span className={cn(
+                      "font-mono",
+                      step.toLowerCase().includes("failed") ? "text-red-400" : "text-neutral-500"
+                    )}>
+                      {step}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

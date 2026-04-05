@@ -1,66 +1,74 @@
-"""Tool executor -- runs git commands and reads repo files"""
+"""Tool executor — runs git commands and analyzes repo files for forensic investigation."""
+
 import subprocess
 import os
 import json
-from typing import Optional
+import re
+from collections import Counter
+
 
 class ToolExecutor:
     def __init__(self, repo_path: str, repo_url: str):
         self.repo_path = repo_path
         self.repo_url = repo_url
-        # Extract owner/repo from URL
         parts = repo_url.rstrip("/").split("/")
         self.owner = parts[-2] if len(parts) >= 2 else ""
         self.repo = parts[-1].replace(".git", "") if len(parts) >= 1 else ""
 
-    def _run_git(self, *args, cwd=None) -> str:
-        cmd = ["git"] + list(args)
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or self.repo_path, timeout=30)
+    def _run(self, cmd, shell=False, timeout=30) -> str:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            cwd=self.repo_path, timeout=timeout, shell=shell,
+        )
         return result.stdout[:8000] if result.returncode == 0 else f"Error: {result.stderr[:500]}"
 
-    def _run_gh(self, *args) -> str:
-        cmd = ["gh"] + list(args) + ["--repo", f"{self.owner}/{self.repo}", "--limit", "30", "--json", "title,state,createdAt,closedAt,body,comments"]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        return result.stdout[:8000] if result.returncode == 0 else f"gh not available or error: {result.stderr[:300]}"
+    def _run_git(self, *args) -> str:
+        return self._run(["git"] + list(args))
+
+    # ── Core tools ───────────────────────────────────────────────────────────
 
     def list_files(self, path_prefix: str = "", extension: str = "") -> str:
-        cmd = f"find . -type f -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/venv/*' -not -path '*/__pycache__/*'"
+        cmd = "find . -type f -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/venv/*' -not -path '*/__pycache__/*' -not -path '*/.venv/*' -not -path '*/dist/*' -not -path '*/.next/*'"
         if path_prefix:
             cmd += f" -path './{path_prefix}*'"
         if extension:
             cmd += f" -name '*{extension}'"
-        cmd += " | head -200"
+        cmd += " | sort | head -200"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=self.repo_path, timeout=10)
         files = result.stdout.strip()
         if not files:
             return "No files found"
-        # Add file sizes
         lines = files.split("\n")
         output = []
         for f in lines[:200]:
             full = os.path.join(self.repo_path, f.lstrip("./"))
             try:
                 size = os.path.getsize(full)
-                output.append(f"{f} ({size} bytes)")
-            except:
+                output.append(f"{f} ({size:,} bytes)")
+            except Exception:
                 output.append(f)
         return "\n".join(output)
 
-    def read_file(self, path: str, lines: int = 200) -> str:
+    def read_file(self, path: str, lines: int = 200, offset: int = 0) -> str:
         full = os.path.join(self.repo_path, path)
         if not os.path.exists(full):
             return f"File not found: {path}"
         try:
-            with open(full, 'r', errors='replace') as f:
+            with open(full, "r", errors="replace") as f:
                 content = f.read()
             lines_list = content.split("\n")
-            if len(lines_list) > lines:
-                return "\n".join(lines_list[:lines]) + f"\n... ({len(lines_list)} total lines)"
-            return content[:8000]
+            total = len(lines_list)
+            chunk = lines_list[offset:offset + lines]
+            result = "\n".join(chunk)
+            if offset + lines < total:
+                result += f"\n... (showing lines {offset+1}-{offset+len(chunk)} of {total} total)"
+            elif offset > 0:
+                result = f"(lines {offset+1}-{offset+len(chunk)} of {total})\n" + result
+            return result[:8000]
         except Exception as e:
             return f"Error reading file: {e}"
 
-    def git_log(self, count: int = 50, author: str = "", after: str = "", before: str = "") -> str:
+    def git_log(self, count: int = 50, author: str = "", after: str = "", before: str = "", path: str = "") -> str:
         args = ["log", f"--max-count={count}", "--pretty=format:%h | %ai | %an | %s", "--stat"]
         if author:
             args.append(f"--author={author}")
@@ -68,10 +76,12 @@ class ToolExecutor:
             args.append(f"--after={after}")
         if before:
             args.append(f"--before={before}")
+        if path:
+            args += ["--", path]
         return self._run_git(*args)[:8000]
 
     def git_blame(self, path: str) -> str:
-        return self._run_git("blame", "-w", "-M", path)[:6000]
+        return self._run_git("blame", "-w", "-M", "--line-porcelain", path)[:6000]
 
     def git_diff(self, commit: str) -> str:
         return self._run_git("show", "--stat", "--patch", commit)[:8000]
@@ -79,26 +89,28 @@ class ToolExecutor:
     def list_issues(self, state: str = "all", count: int = 30) -> str:
         cmd = ["gh", "issue", "list", "--repo", f"{self.owner}/{self.repo}",
                "--state", state, "--limit", str(count),
-               "--json", "title,state,createdAt,closedAt,body,comments"]
+               "--json", "title,state,createdAt,closedAt,body,comments,labels"]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
-            return f"Could not fetch issues: {result.stderr[:300]}"
+            return f"Could not fetch issues (gh CLI may not be available): {result.stderr[:300]}"
         try:
             issues = json.loads(result.stdout)
             lines = []
             for i in issues[:30]:
                 c = len(i.get("comments", []))
-                lines.append(f"- [{i['state'].upper()}] {i['title']} (created: {i['createdAt'][:10]}, comments: {c})")
+                labels = ", ".join(l.get("name", "") for l in i.get("labels", []))
+                label_str = f" [{labels}]" if labels else ""
+                lines.append(f"- [{i['state'].upper()}]{label_str} {i['title']} (created: {i['createdAt'][:10]}, comments: {c})")
                 if i.get("body"):
-                    lines.append(f"  Body: {i['body'][:200]}")
+                    lines.append(f"  Body: {i['body'][:300]}")
             return "\n".join(lines) if lines else "No issues found"
-        except:
+        except Exception:
             return result.stdout[:4000]
 
     def list_pull_requests(self, state: str = "all", count: int = 20) -> str:
         cmd = ["gh", "pr", "list", "--repo", f"{self.owner}/{self.repo}",
                "--state", state, "--limit", str(count),
-               "--json", "title,state,createdAt,closedAt,mergedAt,comments,reviewDecision"]
+               "--json", "title,state,createdAt,closedAt,mergedAt,comments,reviewDecision,author"]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return f"Could not fetch PRs: {result.stderr[:300]}"
@@ -108,9 +120,11 @@ class ToolExecutor:
             for p in prs[:20]:
                 merged = "MERGED" if p.get("mergedAt") else p["state"].upper()
                 c = len(p.get("comments", []))
-                lines.append(f"- [{merged}] {p['title']} (created: {p['createdAt'][:10]}, comments: {c})")
+                author = p.get("author", {}).get("login", "unknown")
+                review = p.get("reviewDecision", "none")
+                lines.append(f"- [{merged}] {p['title']} by @{author} (created: {p['createdAt'][:10]}, comments: {c}, review: {review})")
             return "\n".join(lines) if lines else "No PRs found"
-        except:
+        except Exception:
             return result.stdout[:4000]
 
     def get_contributors(self) -> str:
@@ -119,6 +133,8 @@ class ToolExecutor:
             return "Could not get contributors"
         return result[:3000]
 
+    # ── Deep analysis tools ──────────────────────────────────────────────────
+
     def analyze_complexity(self, paths: list) -> str:
         output = []
         for p in paths[:20]:
@@ -126,45 +142,370 @@ class ToolExecutor:
             if not os.path.exists(full):
                 continue
             try:
-                with open(full, 'r', errors='replace') as f:
+                with open(full, "r", errors="replace") as f:
                     content = f.read()
                 lines = content.split("\n")
-                funcs = content.count("def ") + content.count("function ") + content.count("const ")
-                todos = content.lower().count("todo") + content.lower().count("hack") + content.lower().count("fixme")
-                output.append(f"{p}: {len(lines)} lines, ~{funcs} functions, {todos} TODOs/hacks")
-            except:
+                total_lines = len(lines)
+                blank = sum(1 for l in lines if not l.strip())
+                comments = sum(1 for l in lines if l.strip().startswith(("#", "//", "/*", "*", "'''", '"""')))
+                code_lines = total_lines - blank - comments
+
+                # Count definitions
+                funcs = len(re.findall(r"\bdef\s+\w+|function\s+\w+|const\s+\w+\s*=\s*(?:async\s*)?\(|=>\s*{", content))
+                classes = len(re.findall(r"\bclass\s+\w+", content))
+
+                # Code smells
+                todos = len(re.findall(r"(?i)\bTODO\b", content))
+                fixmes = len(re.findall(r"(?i)\bFIXME\b", content))
+                hacks = len(re.findall(r"(?i)\bHACK\b", content))
+                noqa = len(re.findall(r"noqa|eslint-disable|type:\s*ignore|@ts-ignore", content))
+
+                # Long functions (rough: >50 lines between def/function)
+                long_funcs = 0
+                in_func = False
+                func_lines = 0
+                for line in lines:
+                    if re.match(r"\s*(def |function |async function |const \w+ = )", line):
+                        if in_func and func_lines > 50:
+                            long_funcs += 1
+                        in_func = True
+                        func_lines = 0
+                    elif in_func:
+                        func_lines += 1
+                if in_func and func_lines > 50:
+                    long_funcs += 1
+
+                # Max nesting depth
+                max_indent = 0
+                for line in lines:
+                    if line.strip():
+                        indent = len(line) - len(line.lstrip())
+                        max_indent = max(max_indent, indent // 4)
+
+                report = f"""{p}:
+  Lines: {total_lines} total ({code_lines} code, {blank} blank, {comments} comments)
+  Structure: {funcs} functions, {classes} classes
+  Smells: {todos} TODOs, {fixmes} FIXMEs, {hacks} HACKs, {noqa} lint suppresions
+  Long functions (>50 lines): {long_funcs}
+  Max nesting depth: {max_indent} levels"""
+                output.append(report)
+            except Exception:
                 pass
-        return "\n".join(output) if output else "Could not analyze"
+        return "\n\n".join(output) if output else "Could not analyze"
 
     def search_code(self, pattern: str, file_type: str = "") -> str:
         cmd = ["grep", "-rn", "-E", pattern, "."]
         if file_type:
             cmd = ["grep", "-rn", "--include", f"*.{file_type}", "-E", pattern, "."]
+        # Exclude common non-source dirs
+        cmd += ["--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=venv", "--exclude-dir=dist", "--exclude-dir=.next"]
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=self.repo_path, timeout=15)
         if result.returncode != 0:
             return f"No matches for '{pattern}'"
         lines = result.stdout.strip().split("\n")[:50]
-        return "\n".join(lines)
+        return f"Found {len(lines)} matches:\n" + "\n".join(lines)
 
     def get_commit_frequency(self) -> str:
         result = self._run_git("log", "--format=%ai", "--all")
         if not result.strip():
             return "No commits found"
-        # Parse into monthly buckets
-        from collections import Counter
         months = Counter()
         for line in result.strip().split("\n"):
             if line.strip():
                 try:
-                    month = line.strip()[:7]  # YYYY-MM
-                    months[month] += 1
-                except:
+                    months[line.strip()[:7]] += 1
+                except Exception:
                     pass
-        lines = [f"{m}: {'#' * min(c, 50)} ({c} commits)" for m, c in sorted(months.items())]
-        return "\n".join(lines) if lines else "No commit data"
+        lines = []
+        sorted_months = sorted(months.items())
+        for m, c in sorted_months:
+            bar = "#" * min(c, 50)
+            lines.append(f"{m}: {bar} ({c} commits)")
+
+        # Add gap analysis
+        if len(sorted_months) >= 2:
+            all_months = [m for m, _ in sorted_months]
+            first, last = all_months[0], all_months[-1]
+            lines.append(f"\nActive period: {first} to {last}")
+            lines.append(f"Total active months: {len(all_months)}")
+            total = sum(c for _, c in sorted_months)
+            lines.append(f"Average: {total / len(all_months):.1f} commits/month")
+
+        return "\n".join(lines)
+
+    def check_dependencies(self) -> str:
+        """Analyze dependency files for health signals."""
+        dep_files = {
+            "package.json": self._analyze_npm,
+            "requirements.txt": self._analyze_pip_requirements,
+            "pyproject.toml": self._analyze_pyproject,
+            "Cargo.toml": self._analyze_generic_deps,
+            "go.mod": self._analyze_generic_deps,
+            "Gemfile": self._analyze_generic_deps,
+        }
+        output = []
+        for filename, analyzer in dep_files.items():
+            full = os.path.join(self.repo_path, filename)
+            if os.path.exists(full):
+                try:
+                    with open(full, "r", errors="replace") as f:
+                        content = f.read()
+                    result = analyzer(content, filename)
+                    output.append(result)
+                except Exception as e:
+                    output.append(f"{filename}: Error analyzing — {e}")
+
+        # Check for lock files
+        lock_files = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "Pipfile.lock", "uv.lock", "Cargo.lock"]
+        found_locks = [f for f in lock_files if os.path.exists(os.path.join(self.repo_path, f))]
+        if found_locks:
+            output.append(f"Lock files present: {', '.join(found_locks)} (dependency versions are pinned)")
+        else:
+            output.append("WARNING: No lock files found — dependency versions may drift")
+
+        return "\n\n".join(output) if output else "No dependency files found"
+
+    def _analyze_npm(self, content: str, filename: str) -> str:
+        try:
+            pkg = json.loads(content)
+            deps = pkg.get("dependencies", {})
+            dev_deps = pkg.get("devDependencies", {})
+            scripts = pkg.get("scripts", {})
+
+            # Check pinning
+            unpinned = [k for k, v in {**deps, **dev_deps}.items() if v.startswith("^") or v.startswith("~")]
+
+            lines = [f"package.json:"]
+            lines.append(f"  Dependencies: {len(deps)} runtime, {len(dev_deps)} dev")
+            lines.append(f"  Scripts: {', '.join(scripts.keys())}")
+            if unpinned:
+                lines.append(f"  Unpinned (^/~): {len(unpinned)} — risk of breaking updates")
+            if "test" not in scripts and "jest" not in scripts:
+                lines.append(f"  WARNING: No test script found")
+            return "\n".join(lines)
+        except Exception:
+            return f"package.json: Could not parse JSON"
+
+    def _analyze_pip_requirements(self, content: str, filename: str) -> str:
+        lines = [l.strip() for l in content.split("\n") if l.strip() and not l.startswith("#")]
+        pinned = sum(1 for l in lines if "==" in l)
+        unpinned = sum(1 for l in lines if ">=" in l or l.strip().isalpha())
+        return f"requirements.txt:\n  Total deps: {len(lines)}\n  Pinned (==): {pinned}\n  Unpinned (>=): {unpinned}"
+
+    def _analyze_pyproject(self, content: str, filename: str) -> str:
+        deps = re.findall(r'"([^"]+)"', content)
+        return f"pyproject.toml:\n  Dependencies found: {len(deps)}\n  Content preview: {content[:500]}"
+
+    def _analyze_generic_deps(self, content: str, filename: str) -> str:
+        lines = [l for l in content.split("\n") if l.strip() and not l.startswith("#")]
+        return f"{filename}:\n  Lines: {len(lines)}\n  Preview: {content[:500]}"
+
+    def check_tests(self) -> str:
+        """Analyze test infrastructure."""
+        output = []
+
+        # Find test files
+        test_patterns = ["test_*.py", "*_test.py", "*.test.js", "*.test.ts", "*.test.tsx",
+                         "*.spec.js", "*.spec.ts", "*.spec.tsx", "*_test.go", "*_test.rs"]
+        test_files = []
+        for pattern in test_patterns:
+            result = subprocess.run(
+                f"find . -name '{pattern}' -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/venv/*' | head -50",
+                shell=True, capture_output=True, text=True, cwd=self.repo_path, timeout=10,
+            )
+            if result.stdout.strip():
+                test_files.extend(result.stdout.strip().split("\n"))
+
+        if test_files:
+            output.append(f"Test files found: {len(test_files)}")
+            for f in test_files[:20]:
+                output.append(f"  {f}")
+        else:
+            output.append("WARNING: No test files found — zero test coverage")
+
+        # Check for test config
+        test_configs = ["jest.config.js", "jest.config.ts", "pytest.ini", "setup.cfg", "pyproject.toml",
+                        ".mocharc.yml", "vitest.config.ts", "cypress.config.js", ".github/workflows"]
+        found_configs = []
+        for cfg in test_configs:
+            full = os.path.join(self.repo_path, cfg)
+            if os.path.exists(full):
+                found_configs.append(cfg)
+        if found_configs:
+            output.append(f"Test config: {', '.join(found_configs)}")
+
+        # Check CI/CD
+        ci_dirs = [".github/workflows", ".circleci", ".travis.yml", "Jenkinsfile", ".gitlab-ci.yml"]
+        found_ci = [d for d in ci_dirs if os.path.exists(os.path.join(self.repo_path, d))]
+        if found_ci:
+            output.append(f"CI/CD: {', '.join(found_ci)}")
+        else:
+            output.append("WARNING: No CI/CD configuration found")
+
+        # Source-to-test ratio
+        src_result = subprocess.run(
+            "find . -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.tsx' | grep -v node_modules | grep -v .git | grep -v test | grep -v spec | wc -l",
+            shell=True, capture_output=True, text=True, cwd=self.repo_path, timeout=10,
+        )
+        src_count = int(src_result.stdout.strip() or 0)
+        if src_count > 0 and test_files:
+            ratio = len(test_files) / src_count
+            output.append(f"Test-to-source ratio: {ratio:.2f} ({len(test_files)} test files / {src_count} source files)")
+            if ratio < 0.1:
+                output.append("CRITICAL: Very low test coverage — less than 10% of source files have tests")
+
+        return "\n".join(output) if output else "Could not analyze test infrastructure"
+
+    def get_file_history(self, path: str) -> str:
+        """Get the change history of a specific file."""
+        log = self._run_git("log", "--follow", "--pretty=format:%h | %ai | %an | %s", "--", path)
+        if not log.strip() or log.startswith("Error"):
+            return f"No history found for {path}"
+
+        commits = log.strip().split("\n")
+        output = [f"File: {path}", f"Total changes: {len(commits)} commits", ""]
+        for c in commits[:30]:
+            output.append(c)
+
+        # Get first and last modification
+        if len(commits) >= 2:
+            output.append(f"\nFirst created: {commits[-1].split('|')[1].strip()[:10]}")
+            output.append(f"Last modified: {commits[0].split('|')[1].strip()[:10]}")
+
+        # Check churn (files changed too often = instability)
+        if len(commits) > 20:
+            output.append(f"\nWARNING: High churn — {len(commits)} changes indicates instability")
+
+        return "\n".join(output)
+
+    def get_repo_health(self) -> str:
+        """Get overall repository health metrics."""
+        output = []
+
+        # Total commits
+        total = self._run_git("rev-list", "--count", "HEAD").strip()
+        output.append(f"Total commits: {total}")
+
+        # First and last commit dates
+        first = self._run_git("log", "--reverse", "--format=%ai", "-1").strip()[:10]
+        last = self._run_git("log", "--format=%ai", "-1").strip()[:10]
+        output.append(f"First commit: {first}")
+        output.append(f"Last commit: {last}")
+
+        # Days since last commit
+        import datetime
+        try:
+            last_date = datetime.datetime.strptime(last, "%Y-%m-%d")
+            days_idle = (datetime.datetime.now() - last_date).days
+            output.append(f"Days since last commit: {days_idle}")
+            if days_idle > 365:
+                output.append("CRITICAL: Project appears abandoned (>1 year since last commit)")
+            elif days_idle > 180:
+                output.append("WARNING: Project may be stale (>6 months since last commit)")
+            elif days_idle > 90:
+                output.append("NOTE: Activity has slowed (>3 months since last commit)")
+        except Exception:
+            pass
+
+        # File count
+        file_count = self._run("find . -type f -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/venv/*' | wc -l", shell=True).strip()
+        output.append(f"Files in repo: {file_count}")
+
+        # Lines of code (approximate)
+        loc = self._run(
+            "find . -type f \\( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.tsx' -o -name '*.jsx' -o -name '*.go' -o -name '*.rs' -o -name '*.java' -o -name '*.rb' \\) "
+            "-not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/venv/*' "
+            "| xargs wc -l 2>/dev/null | tail -1",
+            shell=True
+        ).strip()
+        if loc:
+            output.append(f"Lines of code: {loc}")
+
+        # Contributors count
+        contrib = self._run_git("shortlog", "-sn", "--all").strip()
+        num_contributors = len(contrib.split("\n")) if contrib and not contrib.startswith("Error") else 0
+        output.append(f"Contributors: {num_contributors}")
+
+        # Bus factor
+        if contrib and not contrib.startswith("Error"):
+            lines = contrib.strip().split("\n")
+            if lines:
+                counts = []
+                for line in lines:
+                    parts = line.strip().split("\t")
+                    if parts and parts[0].strip().isdigit():
+                        counts.append(int(parts[0].strip()))
+                if counts:
+                    total_commits = sum(counts)
+                    top = counts[0]
+                    bus_factor_pct = (top / total_commits * 100) if total_commits > 0 else 0
+                    output.append(f"Bus factor: Top contributor has {bus_factor_pct:.0f}% of all commits")
+                    if bus_factor_pct > 80:
+                        output.append("CRITICAL: Single point of failure — one person owns >80% of commits")
+
+        # Branches
+        branches = self._run_git("branch", "-a").strip()
+        branch_count = len(branches.split("\n")) if branches else 0
+        output.append(f"Branches: {branch_count}")
+
+        # Tags/releases
+        tags = self._run_git("tag", "-l").strip()
+        tag_count = len(tags.split("\n")) if tags.strip() else 0
+        output.append(f"Tags/releases: {tag_count}")
+        if tag_count == 0:
+            output.append("WARNING: No releases/tags — no versioning strategy")
+
+        return "\n".join(output)
+
+    def analyze_commit_messages(self, count: int = 50) -> str:
+        """Analyze commit message patterns and sentiment."""
+        result = self._run_git("log", f"--max-count={count}", "--pretty=format:%s")
+        if not result.strip() or result.startswith("Error"):
+            return "No commits to analyze"
+
+        messages = result.strip().split("\n")
+        output = [f"Analyzing {len(messages)} commit messages:", ""]
+
+        # Message length analysis
+        lengths = [len(m) for m in messages]
+        avg_len = sum(lengths) / len(lengths) if lengths else 0
+        one_word = sum(1 for m in messages if len(m.split()) <= 1)
+        output.append(f"Average message length: {avg_len:.0f} chars")
+        output.append(f"One-word messages: {one_word} ({one_word/len(messages)*100:.0f}%)")
+
+        # Pattern detection
+        patterns = {
+            "fix/bug": r"(?i)\b(fix|bug|patch|hotfix)\b",
+            "wip/temp": r"(?i)\b(wip|temp|tmp|todo|hack)\b",
+            "frustration": r"(?i)\b(fuck|shit|damn|ugh|argh|wtf|ffs|finally|stupid|broken)\b",
+            "rush/panic": r"(?i)\b(urgent|asap|quick fix|emergency|hotfix|critical|breaking)\b",
+            "revert": r"(?i)\b(revert|rollback|undo)\b",
+            "refactor": r"(?i)\b(refactor|cleanup|clean up|reorganize|restructure)\b",
+            "feature": r"(?i)\b(add|implement|feature|new|create|introduce)\b",
+            "docs": r"(?i)\b(docs|readme|documentation|comment)\b",
+            "merge/conflict": r"(?i)\b(merge|conflict|resolve)\b",
+        }
+
+        for label, pattern in patterns.items():
+            matches = [m for m in messages if re.search(pattern, m)]
+            if matches:
+                pct = len(matches) / len(messages) * 100
+                output.append(f"\n{label.upper()} ({len(matches)}, {pct:.0f}%):")
+                for m in matches[:5]:
+                    output.append(f"  - {m[:100]}")
+
+        # Conventional commits check
+        conventional = sum(1 for m in messages if re.match(r"^(feat|fix|chore|docs|style|refactor|test|ci|perf|build)(\(.+\))?:", m))
+        if conventional > len(messages) * 0.3:
+            output.append(f"\nConventional commits: {conventional}/{len(messages)} — good practice")
+        elif conventional == 0:
+            output.append(f"\nNo conventional commits used — unstructured history")
+
+        return "\n".join(output)
+
+    # ── Dispatcher ───────────────────────────────────────────────────────────
 
     def execute(self, tool_name: str, arguments: dict) -> str:
-        """Dispatch a tool call by name"""
         dispatch = {
             "list_files": lambda: self.list_files(**arguments),
             "read_file": lambda: self.read_file(**arguments),
@@ -177,6 +518,11 @@ class ToolExecutor:
             "analyze_complexity": lambda: self.analyze_complexity(**arguments),
             "search_code": lambda: self.search_code(**arguments),
             "get_commit_frequency": lambda: self.get_commit_frequency(**arguments),
+            "check_dependencies": lambda: self.check_dependencies(),
+            "check_tests": lambda: self.check_tests(),
+            "get_file_history": lambda: self.get_file_history(**arguments),
+            "get_repo_health": lambda: self.get_repo_health(),
+            "analyze_commit_messages": lambda: self.analyze_commit_messages(**arguments),
         }
         handler = dispatch.get(tool_name)
         if not handler:

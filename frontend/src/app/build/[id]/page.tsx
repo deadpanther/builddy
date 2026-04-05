@@ -3,14 +3,14 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, MessageSquare, ExternalLink, Wand2, Send, GitBranch } from "lucide-react";
+import { ArrowLeft, MessageSquare, ExternalLink, Wand2, Send, GitBranch, Brain, Image, ChevronDown, ChevronUp } from "lucide-react";
 import { getBuild, resolveDeployUrl, modifyBuild } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
 import { AgentSteps } from "@/components/AgentSteps";
 import { AppPreview } from "@/components/AppPreview";
 import { CodePreview } from "@/components/CodePreview";
 import { cn } from "@/lib/utils";
-import type { Build } from "@/lib/types";
+import type { Build, ReasoningEntry } from "@/lib/types";
 
 const ACTIVE_STATUSES = new Set(["pending", "planning", "coding", "reviewing", "deploying"]);
 
@@ -26,6 +26,7 @@ export default function BuildDetailPage() {
   const [modifyText, setModifyText] = useState("");
   const [modifying, setModifying] = useState(false);
   const [modifyError, setModifyError] = useState("");
+  const [showReasoning, setShowReasoning] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -110,9 +111,16 @@ export default function BuildDetailPage() {
   // Parse failedAt status from error field: "[coding] Error message"
   const failedAtStatus = build.error?.match(/^\[(\w+)\]/)?.[1] ?? null;
 
+  // Parse reasoning log
+  const reasoningEntries: ReasoningEntry[] = (() => {
+    if (!build.reasoning_log) return [];
+    try { return JSON.parse(build.reasoning_log); } catch { return []; }
+  })();
+
   const isActive = ACTIVE_STATUSES.has(build.status);
   const deployUrl = resolveDeployUrl(build.deploy_url);
   const canModify = build.status === "deployed" && build.generated_code;
+  const isScreenshot = build.build_type === "screenshot";
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -133,6 +141,12 @@ export default function BuildDetailPage() {
               {build.app_name ?? "Untitled Build"}
             </h1>
             <StatusBadge status={build.status} />
+            {isScreenshot && (
+              <span className="flex items-center gap-1 rounded border border-blue-800 bg-blue-950/50 px-2 py-0.5 font-mono text-[10px] text-blue-400">
+                <Image className="h-3 w-3" />
+                5V-Turbo
+              </span>
+            )}
             {isActive && (
               <span className="flex items-center gap-1.5 font-mono text-[10px] text-emerald-500">
                 <span className="live-dot" />
@@ -292,6 +306,43 @@ export default function BuildDetailPage() {
               rawSteps={rawSteps}
             />
           </div>
+
+          {/* GLM Reasoning (thinking mode) */}
+          {reasoningEntries.length > 0 && (
+            <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-5">
+              <button
+                onClick={() => setShowReasoning(!showReasoning)}
+                className="flex w-full items-center justify-between"
+              >
+                <div className="flex items-center gap-2">
+                  <Brain className="h-4 w-4 text-purple-400" />
+                  <h3 className="font-semibold text-sm text-purple-300">GLM Reasoning</h3>
+                  <span className="font-mono text-[10px] text-purple-600">
+                    {reasoningEntries.length} stage{reasoningEntries.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                {showReasoning ? (
+                  <ChevronUp className="h-4 w-4 text-purple-500" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-purple-500" />
+                )}
+              </button>
+              {showReasoning && (
+                <div className="mt-3 space-y-3">
+                  {reasoningEntries.map((entry, i) => (
+                    <div key={i} className="rounded border border-purple-900/30 bg-neutral-950 p-3">
+                      <span className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-purple-500">
+                        {entry.stage}
+                      </span>
+                      <p className="font-mono text-xs text-neutral-400 leading-relaxed whitespace-pre-wrap">
+                        {entry.reasoning}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Metadata */}
           <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-5 space-y-3">

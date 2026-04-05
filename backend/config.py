@@ -11,10 +11,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # GLM 5.1 API
+    # GLM API
     GLM_API_KEY: str = ""
-    GLM_BASE_URL: str = "https://open.z.ai/api/paas/v4/"
+    GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4/"
     GLM_MODEL: str = "glm-5.1"
+    GLM_VISION_MODEL: str = "glm-5v-turbo"
+    GLM_IMAGE_MODEL: str = "cogView-4-250304"
+    ENABLE_THINKING: bool = True
+    ENABLE_WEB_SEARCH: bool = True
+    ENABLE_IMAGE_GEN: bool = True
 
     # Twitter API v2
     TWITTER_BEARER_TOKEN: str = ""

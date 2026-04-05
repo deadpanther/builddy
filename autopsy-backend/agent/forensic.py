@@ -1,7 +1,6 @@
-"""Forensic analyst -- GLM 5.1 agent that performs repo autopsy"""
+"""Forensic analyst — GLM agent that performs deep repo autopsy with structured investigation."""
+
 import json
-import uuid
-import asyncio
 import subprocess
 import os
 from datetime import datetime
@@ -10,90 +9,112 @@ from config import settings
 from agent.tools import TOOLS
 from agent.executor import ToolExecutor
 
-SYSTEM_PROMPT = """You are Dr. Autopsy, a forensic code analyst. You perform death analysis on software projects.
+SYSTEM_PROMPT = """You are **Dr. Autopsy**, a legendary forensic code pathologist. You perform meticulous post-mortem examinations on software repositories to determine cause of death, contributing pathologies, and lessons for the living.
 
-Your job is to examine a GitHub repository and determine WHY it died (or is dying). You are thorough,
-methodical, and relentless in your investigation -- like a forensic pathologist performing an autopsy.
+Your analysis style is:
+- **Dramatic but evidence-based** — every claim backed by specific files, commits, or metrics
+- **Forensic vocabulary** — "time of death", "toxicology" (dependencies), "trauma patterns" (code smells)
+- **Brutally honest** — no sugar-coating. If the code is bad, say why. If the project was doomed from birth, explain.
+- **Deeply technical** — you understand architecture patterns, anti-patterns, and why projects actually fail
 
-## Investigation Protocol
+## Investigation Protocol (Follow this EXACTLY)
 
-### Phase 1: Scene Examination (Ingestion)
-- List all files to understand project structure
-- Get commit frequency to see activity patterns
-- Get contributors to understand team dynamics
-- Check recent git log for signs of decline
+### Phase 1: Scene Examination (3-5 tool calls)
+1. `get_repo_health` — vital signs: commits, contributors, activity, bus factor
+2. `list_files` — project structure, understand the anatomy
+3. `get_commit_frequency` — activity timeline, detect decline patterns
+4. `get_contributors` — team dynamics, contributor drop-off
 
-### Phase 2: Deep Forensic Analysis
-- Read key source files (entry points, config, README, tests)
-- Examine commit messages for sentiment changes, urgency, frustration
-- Analyze issues for unresolved bugs, feature creep, community frustration
-- Check PR patterns for rejected contributions, contributor churn
-- Search for TODOs, FIXMEs, HACKs -- signs of technical debt
-- Look for abandoned features, commented-out code, dead code paths
-- Analyze code complexity trends
+### Phase 2: Deep Forensic Analysis (10-15 tool calls)
+5. `read_file` README.md — understand what the project claims to be
+6. `read_file` on entry points (main.py, index.js, server.py, app.py, etc.)
+7. `check_dependencies` — dependency health, version pinning, bloat
+8. `check_tests` — test infrastructure, coverage gaps
+9. `analyze_commit_messages` — developer sentiment, rush patterns, frustration markers
+10. `search_code` for "TODO|FIXME|HACK|XXX" — technical debt markers
+11. `search_code` for "deprecated|obsolete|legacy|workaround" — decay signals
+12. `analyze_complexity` on the largest source files — code quality trajectory
+13. `git_log` for recent commits — was there a final burst of activity or slow decline?
+14. `git_diff` on suspicious commits — what did the fatal changes actually do?
+15. `get_file_history` on the most-changed files — hotspot analysis
+16. `list_issues` — community health, unresolved bugs
+17. `list_pull_requests` — contribution patterns, rejected PRs
 
-### Phase 3: Autopsy Report
-Synthesize all evidence into a structured report:
+### Phase 3: Synthesize & Report
+After gathering evidence, call `final_report` with your complete forensic findings.
 
-1. **cause_of_death**: The PRIMARY reason this project died. Be specific and cite evidence.
-   Examples: "Abandoned by sole maintainer after burnout", "Unresolved critical bugs eroded user trust",
-   "Architecture became unmaintainable due to scope creep", "Funding ran out", "Core dependency broke"
+## Forensic Report Requirements
 
-2. **contributing_factors**: 3-5 secondary factors that accelerated the death
+Your `findings` object MUST include ALL of these sections with detailed analysis:
 
-3. **timeline**: List of key events chronologically. Each entry has:
-   - date: YYYY-MM-DD format
-   - event: What happened
-   - severity: "critical", "warning", "info"
-   - evidence: Supporting evidence
+### architecture
+Assess the system architecture: monolith vs microservices, separation of concerns, coupling, cohesion. Is it well-structured or a big ball of mud? Cite specific files and patterns.
 
-4. **fatal_commits**: 2-5 specific commits that were turning points. Each has:
-   - hash: Commit hash
-   - date: Date
-   - message: Commit message
-   - why_fatal: Why this commit was a turning point
+### code_quality
+Code quality trajectory: naming conventions, function sizes, nesting depth, DRY violations, dead code. Include specific file:line examples of the worst offenders.
 
-5. **findings**: Detailed forensic analysis sections covering:
-   - Architecture assessment
-   - Code quality trajectory
-   - Community health
-   - Technical debt accumulation
-   - Dependency management
-   - Testing practices
+### technical_debt
+Technical debt accumulation: TODO count, hack markers, lint suppressions, workarounds, deprecated patterns. Quantify the debt load with evidence.
 
-6. **lessons_learned**: 5-8 actionable lessons other developers can learn
+### dependency_health
+Dependency management: are versions pinned? Any known vulnerable or abandoned dependencies? Over-reliance on unmaintained packages? Lock file discipline.
 
-Be dramatic but accurate. Use forensic terminology. Cite specific evidence (file names, commit hashes, dates).
-If the repo is not actually dead, say so but still analyze its health risks.
+### testing_practices
+Testing rigor: test coverage, test types (unit/integration/e2e), CI/CD pipeline, test-to-source ratio. If there are no tests, this is a critical finding.
 
-When you have gathered enough evidence, call the final_report function with all your findings.
+### community_health
+Community dynamics: contributor count and distribution, bus factor, issue response time, PR review culture, communication patterns in commits.
+
+### security_posture
+Security assessment: hardcoded secrets, exposed API keys, SQL injection vectors, XSS potential, missing auth checks, .env handling.
+
+### scalability_risks
+Scalability concerns: single-threaded bottlenecks, missing caching, N+1 queries, unbounded data structures, missing pagination.
+
+## Death Classification
+
+Classify the death as one of:
+- **HOMICIDE** — killed by external forces (funding cut, company pivot, acqui-hire)
+- **SUICIDE** — self-inflicted (scope creep, rewrite-from-scratch, perfectionism paralysis)
+- **NATURAL CAUSES** — gradual decline (tech debt accumulation, slow contributor attrition)
+- **ACCIDENT** — sudden death (catastrophic bug, data loss, security breach)
+- **STILL ALIVE** — not dead yet, but list health risks and prognosis
+
+Include the classification in your cause_of_death.
+
+IMPORTANT: Be thorough in your investigation but efficient with your tool calls. You have a limited number of steps. Prioritize the most revealing tools first. When you have enough evidence, call final_report immediately — do not keep investigating indefinitely.
 """
 
 FINAL_REPORT_TOOL = {
     "type": "function",
     "function": {
         "name": "final_report",
-        "description": "Submit the final autopsy report with all findings.",
+        "description": "Submit the final autopsy report. Call this when you have gathered enough evidence. Include ALL required sections.",
         "parameters": {
             "type": "object",
             "properties": {
-                "cause_of_death": {"type": "string", "description": "Primary cause of death"},
+                "cause_of_death": {
+                    "type": "string",
+                    "description": "Primary cause of death with death classification (HOMICIDE/SUICIDE/NATURAL CAUSES/ACCIDENT/STILL ALIVE). Be specific and dramatic."
+                },
                 "contributing_factors": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of contributing factors"
+                    "description": "3-7 secondary factors that contributed to death. Each should be a specific, evidence-backed statement."
                 },
                 "timeline": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "date": {"type": "string"},
-                            "event": {"type": "string"},
-                            "severity": {"type": "string"},
-                            "evidence": {"type": "string"}
-                        }
-                    }
+                            "date": {"type": "string", "description": "YYYY-MM-DD format"},
+                            "event": {"type": "string", "description": "What happened — be specific"},
+                            "severity": {"type": "string", "enum": ["critical", "warning", "info"]},
+                            "evidence": {"type": "string", "description": "Cite specific commits, files, or metrics"}
+                        },
+                        "required": ["date", "event", "severity", "evidence"]
+                    },
+                    "description": "6-15 chronological events that tell the story of this project's life and death"
                 },
                 "fatal_commits": {
                     "type": "array",
@@ -103,20 +124,41 @@ FINAL_REPORT_TOOL = {
                             "hash": {"type": "string"},
                             "date": {"type": "string"},
                             "message": {"type": "string"},
-                            "why_fatal": {"type": "string"}
-                        }
-                    }
+                            "why_fatal": {"type": "string", "description": "Detailed explanation of why this commit was a turning point"}
+                        },
+                        "required": ["hash", "date", "message", "why_fatal"]
+                    },
+                    "description": "3-5 specific commits that were turning points"
                 },
                 "findings": {
                     "type": "object",
-                    "description": "Detailed analysis sections"
+                    "description": "Detailed forensic findings organized by category",
+                    "properties": {
+                        "architecture": {"type": "string", "description": "Architecture assessment with specific file references"},
+                        "code_quality": {"type": "string", "description": "Code quality analysis with examples"},
+                        "technical_debt": {"type": "string", "description": "Technical debt quantification"},
+                        "dependency_health": {"type": "string", "description": "Dependency analysis"},
+                        "testing_practices": {"type": "string", "description": "Test infrastructure assessment"},
+                        "community_health": {"type": "string", "description": "Community and contributor analysis"},
+                        "security_posture": {"type": "string", "description": "Security assessment"},
+                        "scalability_risks": {"type": "string", "description": "Scalability concerns"}
+                    }
+                },
+                "health_score": {
+                    "type": "integer",
+                    "description": "Overall health score from 0 (dead) to 100 (thriving)"
+                },
+                "prognosis": {
+                    "type": "string",
+                    "description": "If still alive: prognosis for survival. If dead: what it would take to resurrect. Be specific."
                 },
                 "lessons_learned": {
                     "type": "array",
-                    "items": {"type": "string"}
+                    "items": {"type": "string"},
+                    "description": "5-10 actionable lessons with specific advice, not generic platitudes"
                 }
             },
-            "required": ["cause_of_death", "contributing_factors", "timeline", "lessons_learned"]
+            "required": ["cause_of_death", "contributing_factors", "timeline", "findings", "health_score", "lessons_learned"]
         }
     }
 }
@@ -137,7 +179,7 @@ class ForensicAnalyst:
         self.all_tools = TOOLS + [FINAL_REPORT_TOOL]
 
     async def clone_repo(self, progress_callback=None):
-        """Clone the repo for analysis"""
+        """Clone the repo for analysis."""
         repo_name = self.repo_url.rstrip("/").split("/")[-1].replace(".git", "")
         self.repo_path = os.path.join(settings.CLONE_DIR, f"{self.autopsy_id}-{repo_name}")
         os.makedirs(settings.CLONE_DIR, exist_ok=True)
@@ -149,8 +191,8 @@ class ForensicAnalyst:
             await progress_callback("cloning", f"Cloning {self.repo_url}...")
 
         result = subprocess.run(
-            ["git", "clone", self.repo_url, self.repo_path],
-            capture_output=True, text=True, timeout=120
+            ["git", "clone", "--depth=500", self.repo_url, self.repo_path],
+            capture_output=True, text=True, timeout=120,
         )
 
         if result.returncode != 0:
@@ -162,16 +204,18 @@ class ForensicAnalyst:
             await progress_callback("cloning", "Repository cloned successfully. Beginning forensic examination...")
 
     async def analyze(self, progress_callback=None):
-        """Run the full forensic analysis using GLM 5.1"""
-        # Add initial context
+        """Run the full forensic analysis using GLM."""
         self.messages.append({
             "role": "user",
-            "content": f"""Perform a full autopsy on this repository: {self.repo_url}
+            "content": f"""Perform a full forensic autopsy on: {self.repo_url}
 
-Begin with Phase 1: Scene Examination. Use the tools to examine the repo thoroughly.
-After gathering evidence, proceed to Phase 2 and Phase 3.
+Follow the Investigation Protocol exactly:
+1. Phase 1: Scene Examination — get vital signs, structure, activity patterns
+2. Phase 2: Deep Analysis — read code, check dependencies, tests, commits, security
+3. Phase 3: Call final_report with your complete findings
 
-End by calling final_report with your complete findings. Be thorough -- this is a forensic investigation."""
+You have {settings.MAX_ANALYSIS_STEPS} investigation steps. Use them wisely — prioritize the most revealing tools.
+Start with get_repo_health and list_files."""
         })
 
         report = None
@@ -180,6 +224,25 @@ End by calling final_report with your complete findings. Be thorough -- this is 
 
         while steps < settings.MAX_ANALYSIS_STEPS:
             steps += 1
+            remaining = settings.MAX_ANALYSIS_STEPS - steps
+
+            # Nudge when running low
+            if remaining == 8:
+                self.messages.append({
+                    "role": "user",
+                    "content": "You have 8 steps remaining. Make sure to investigate tests, dependencies, and security before wrapping up. Then call final_report."
+                })
+            elif remaining == 4:
+                self.messages.append({
+                    "role": "user",
+                    "content": "4 steps remaining. Start synthesizing your evidence and prepare to call final_report with comprehensive findings."
+                })
+            elif remaining == 1:
+                self.messages.append({
+                    "role": "user",
+                    "content": "FINAL STEP. Call final_report NOW with all evidence gathered. Include all 8 findings sections, health_score, prognosis, and detailed lessons_learned."
+                })
+
             try:
                 response = await self.client.chat.completions.create(
                     model=settings.GLM_MODEL,
@@ -187,7 +250,7 @@ End by calling final_report with your complete findings. Be thorough -- this is 
                     tools=self.all_tools,
                     tool_choice="auto",
                     temperature=0.2,
-                    max_tokens=8192,
+                    max_tokens=16384,
                 )
             except Exception as e:
                 if progress_callback:
@@ -197,8 +260,7 @@ End by calling final_report with your complete findings. Be thorough -- this is 
             choice = response.choices[0]
             assistant_msg = choice.message
 
-            # Add assistant response to conversation (GLM-5.1 content may be empty;
-            # reasoning lives in reasoning_content but that field is not forwarded to the API)
+            # Build assistant message for conversation
             if assistant_msg.tool_calls:
                 self.messages.append({
                     "role": "assistant",
@@ -211,15 +273,13 @@ End by calling final_report with your complete findings. Be thorough -- this is 
                     "content": assistant_msg.content or "",
                 })
 
-            # If no tool calls, nudge the model back to using tools.
-            # GLM-5.1 always returns empty content (reasoning goes to reasoning_content),
-            # so we cannot rely on content length to decide whether to nudge.
+            # No tool calls — nudge or break
             if not assistant_msg.tool_calls:
                 if nudge_count < 3:
                     nudge_count += 1
                     self.messages.append({
                         "role": "user",
-                        "content": "Continue your investigation using the available tools. When done, call final_report."
+                        "content": "Continue investigating with the available tools. When you have enough evidence, call final_report with comprehensive findings."
                     })
                     continue
                 break
@@ -230,12 +290,11 @@ End by calling final_report with your complete findings. Be thorough -- this is 
                 fn_name = tc.function.name
                 try:
                     fn_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                except json.JSONDecodeError as e:
-                    # GLM truncated the arguments JSON (hit max_tokens mid-generation)
+                except json.JSONDecodeError:
                     tool_responses.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": f"Error: arguments JSON was truncated and could not be parsed. Use shorter arguments."
+                        "content": "Error: arguments JSON was truncated. Use shorter arguments or fewer parameters."
                     })
                     continue
 
@@ -285,18 +344,34 @@ End by calling final_report with your complete findings. Be thorough -- this is 
         return report
 
     def generate_death_certificate(self, report: dict) -> dict:
-        """Generate a formal death certificate from the report"""
+        """Generate a formal death certificate from the report."""
         repo_name = self.repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+
+        # Determine classification
+        cause = report.get("cause_of_death", "")
+        classification = "UNDETERMINED"
+        for c in ["HOMICIDE", "SUICIDE", "NATURAL CAUSES", "ACCIDENT", "STILL ALIVE"]:
+            if c in cause.upper():
+                classification = c
+                break
+
+        timeline = report.get("timeline", [])
+        first_event = timeline[0] if timeline else {}
+        last_event = timeline[-1] if timeline else {}
+
         return {
             "certificate_number": self.autopsy_id[:8].upper(),
             "repository": repo_name,
             "repository_url": self.repo_url,
-            "date_of_birth": report.get("timeline", [{}])[0].get("date", "Unknown") if report.get("timeline") else "Unknown",
-            "date_of_death": report.get("timeline", [{}])[-1].get("date", "Unknown") if report.get("timeline") else "Unknown",
+            "classification": classification,
+            "date_of_birth": first_event.get("date", "Unknown"),
+            "date_of_death": last_event.get("date", "Unknown"),
             "cause_of_death": report.get("cause_of_death", "Unknown"),
             "contributing_factors": report.get("contributing_factors", []),
-            "examining_pathologist": "Dr. GLM 5.1",
+            "health_score": report.get("health_score", 0),
+            "prognosis": report.get("prognosis", ""),
+            "examining_pathologist": "Dr. GLM — Forensic Code Pathologist",
             "date_of_examination": datetime.utcnow().isoformat(),
             "findings_summary": report.get("findings", {}),
-            "lessons": report.get("lessons_learned", [])
+            "lessons": report.get("lessons_learned", []),
         }

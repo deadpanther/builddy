@@ -45,6 +45,16 @@ export async function modifyBuild(buildId: string, modification: string): Promis
   return res.json();
 }
 
+export async function createBuildFromImage(imageBase64: string | string[], prompt?: string): Promise<Build> {
+  const res = await fetch(`${API_BASE}/api/builds/from-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_base64: imageBase64, prompt: prompt || "" }),
+  });
+  if (!res.ok) throw new Error(`Failed to create build from image: ${res.statusText}`);
+  return res.json();
+}
+
 export async function getGallery(): Promise<GalleryApp[]> {
   const res = await fetch(`${API_BASE}/api/gallery`);
   if (!res.ok) return [];

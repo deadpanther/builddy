@@ -176,6 +176,10 @@ async def get_autopsy(autopsy_id: str):
         if not autopsy:
             raise HTTPException(404, "Autopsy not found")
 
+        cert = autopsy.death_certificate or {}
+        health_score = cert.get("health_score")
+        prognosis = cert.get("prognosis")
+
         return {
             "id": autopsy.id,
             "repo_url": autopsy.repo_url,
@@ -186,6 +190,8 @@ async def get_autopsy(autopsy_id: str):
             "timeline": autopsy.timeline,
             "fatal_commits": autopsy.fatal_commits,
             "findings": autopsy.findings,
+            "health_score": health_score,
+            "prognosis": prognosis,
             "lessons_learned": autopsy.lessons_learned,
             "error_message": autopsy.error_message,
             "created_at": autopsy.created_at.isoformat() if autopsy.created_at else None,

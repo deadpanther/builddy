@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ExternalLink, Clock, User } from "lucide-react";
+import { ExternalLink, Clock, User, Image } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { resolveDeployUrl } from "@/lib/api";
 import type { Build } from "@/lib/types";
@@ -31,8 +31,23 @@ export function BuildCard({ build }: BuildCardProps) {
             {build.tweet_text || build.prompt || "No description"}
           </p>
         </div>
-        <StatusBadge status={build.status} />
+        <div className="flex items-center gap-2 shrink-0">
+          {build.build_type === "screenshot" && (
+            <span className="flex items-center gap-1 rounded border border-blue-800 bg-blue-950/50 px-1.5 py-0.5 font-mono text-[9px] text-blue-400">
+              <Image className="h-2.5 w-2.5" />
+              5V
+            </span>
+          )}
+          <StatusBadge status={build.status} />
+        </div>
       </div>
+
+      {/* Thumbnail */}
+      {build.thumbnail_url && (
+        <div className="mb-2 overflow-hidden rounded border border-neutral-800">
+          <img src={build.thumbnail_url} alt="" className="h-16 w-full object-cover" />
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 text-xs text-neutral-600">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AtSign, Zap } from "lucide-react";
+import { Zap } from "lucide-react";
 import { BuildFeed } from "@/components/BuildFeed";
 import { SubmitBuild } from "@/components/SubmitBuild";
 
@@ -16,20 +16,11 @@ export default function DashboardPage() {
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <Zap className="h-5 w-5 text-violet-400" />
-              <h1 className="text-2xl font-bold text-neutral-100 tracking-tight">Buildy</h1>
+              <h1 className="text-2xl font-bold text-neutral-100 tracking-tight">Builddy</h1>
             </div>
             <p className="text-sm text-neutral-500">
-              Tweet{" "}
-              <a
-                href="https://twitter.com/intent/tweet?text=@builddy%20Build%20me%20"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 font-mono text-violet-400 hover:text-violet-300 hover:underline"
-              >
-                <AtSign className="h-3 w-3" />
-                @builddy
-              </a>{" "}
-              to build an app — GLM 5.1 generates and deploys it in minutes.
+              Describe an app or upload a screenshot — GLM 5.1 plans, codes, reviews, and deploys it in minutes.
+              Powered by thinking mode, GLM-5V-Turbo vision, CogView-4, and web search.
             </p>
           </div>
         </div>
@@ -50,10 +41,10 @@ export default function DashboardPage() {
               <h3 className="mb-3 font-semibold text-sm text-neutral-300">How it works</h3>
               <ol className="space-y-2.5">
                 {[
-                  { step: "1", text: "Tweet @builddy with your app idea" },
-                  { step: "2", text: "GLM 5.1 plans the app architecture" },
-                  { step: "3", text: "Code is generated and self-reviewed" },
-                  { step: "4", text: "App deploys and you get a live URL" },
+                  { step: "1", text: "Describe your app or upload a screenshot" },
+                  { step: "2", text: "GLM 5.1 researches and plans with thinking mode" },
+                  { step: "3", text: "Code is generated, self-reviewed, and thumbnail created" },
+                  { step: "4", text: "App deploys live — then iterate with modifications" },
                 ].map(({ step, text }) => (
                   <li key={step} className="flex items-start gap-3 text-xs text-neutral-500">
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-neutral-700 font-mono text-[10px] text-neutral-600">

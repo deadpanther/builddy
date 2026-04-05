@@ -32,6 +32,8 @@ async def gallery_list(
             "twitter_username": b.twitter_username,
             "tweet_text": b.tweet_text,
             "deploy_url": b.deploy_url,
+            "build_type": b.build_type,
+            "thumbnail_url": b.thumbnail_url,
             "deployed_at": str(b.deployed_at) if b.deployed_at else None,
         }
         for b in builds

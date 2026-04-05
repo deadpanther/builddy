@@ -28,11 +28,19 @@ export interface Build {
   generated_code?: string;
   deploy_url?: string;
   parent_build_id?: string;
+  build_type?: "text" | "screenshot";
+  thumbnail_url?: string;
+  reasoning_log?: string; // JSON-encoded reasoning entries
   steps?: string; // JSON-encoded AgentStep[]
   error?: string;
   created_at: string;
   updated_at?: string;
   deployed_at?: string;
+}
+
+export interface ReasoningEntry {
+  stage: string;
+  reasoning: string;
 }
 
 export interface GalleryApp {
@@ -79,6 +87,8 @@ export interface AutopsyReport {
   timeline: TimelineEvent[] | null;
   fatal_commits: FatalCommit[] | null;
   findings: Record<string, unknown> | null;
+  health_score: number | null;
+  prognosis: string | null;
   lessons_learned: string[] | null;
   error_message: string | null;
   created_at: string | null;

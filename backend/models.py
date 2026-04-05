@@ -24,6 +24,9 @@ class Build(SQLModel, table=True):
     generated_code: Optional[str] = Field(default=None)
     deploy_url: Optional[str] = Field(default=None)
     parent_build_id: Optional[str] = Field(default=None)  # links to original build for modifications
+    build_type: str = Field(default="text")  # text or screenshot
+    thumbnail_url: Optional[str] = Field(default=None)  # CogView-4 generated thumbnail
+    reasoning_log: Optional[str] = Field(default=None)  # JSON array of reasoning from thinking mode
     steps: Optional[str] = Field(default=None)  # JSON array
     error: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)

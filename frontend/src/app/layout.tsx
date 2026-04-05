@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Buildy — AI App Builder",
+  title: "Builddy — AI App Builder powered by GLM 5.1",
   description: "Tweet @builddy to build an app. GLM 5.1 generates and deploys it instantly.",
 };
 
@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span className="rounded bg-violet-600 px-1.5 py-0.5 font-mono text-xs font-bold text-white">
                 B
               </span>
-              <span className="font-semibold text-neutral-100 tracking-tight">Buildy</span>
+              <span className="font-semibold text-neutral-100 tracking-tight">Builddy</span>
             </Link>
 
             {/* Nav links */}

@@ -212,16 +212,49 @@ export default function AutopsyPage() {
       {/* Report Content */}
       {isDone && (
         <div className="stagger-children space-y-5">
-          {/* Cause of Death */}
-          {report.cause_of_death && (
-            <div className="rounded border-2 border-terminal-red/30 bg-terminal-red/5 p-6">
-              <div className="mb-1 font-typewriter text-[10px] uppercase tracking-[0.3em] text-terminal-red">
-                Cause of Death
+          {/* Health Score + Cause of Death */}
+          <div className="grid gap-4 sm:grid-cols-[160px_1fr]">
+            {/* Health Score */}
+            {report.health_score != null && (
+              <div className="flex flex-col items-center justify-center rounded border border-autopsy-border bg-autopsy-surface p-4">
+                <div className="font-typewriter text-[10px] uppercase tracking-[0.2em] text-neutral-500 mb-2">
+                  Health Score
+                </div>
+                <div
+                  className={`font-mono text-5xl font-bold ${
+                    report.health_score >= 70
+                      ? "text-terminal-green"
+                      : report.health_score >= 40
+                        ? "text-terminal-amber"
+                        : "text-terminal-red"
+                  }`}
+                >
+                  {report.health_score}
+                </div>
+                <div className="mt-1 font-mono text-[10px] text-neutral-600">/ 100</div>
               </div>
-              <p className="font-typewriter text-xl leading-relaxed text-neutral-100">
-                {report.cause_of_death}
+            )}
+
+            {/* Cause of Death */}
+            {report.cause_of_death && (
+              <div className="rounded border-2 border-terminal-red/30 bg-terminal-red/5 p-6">
+                <div className="mb-1 font-typewriter text-[10px] uppercase tracking-[0.3em] text-terminal-red">
+                  Cause of Death
+                </div>
+                <p className="font-typewriter text-xl leading-relaxed text-neutral-100">
+                  {report.cause_of_death}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Prognosis */}
+          {report.prognosis && (
+            <Section title="Prognosis">
+              <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap">
+                {report.prognosis}
               </p>
-            </div>
+            </Section>
           )}
 
           {/* Contributing Factors */}
