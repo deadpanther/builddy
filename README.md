@@ -95,33 +95,40 @@ cp backend/.env.example backend/.env
 # Edit backend/.env and add your GLM_API_KEY
 ```
 
-### 2. Start the backend
+### 2. Start all services (3 terminals)
 
+**Terminal 1 — Builddy Backend (port 8000)**
 ```bash
 cd backend
 uv sync
 uv run uvicorn main:app --reload --port 8000
 ```
 
-### 3. Start the frontend
-
+**Terminal 2 — Frontend (port 3000)**
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-### 4. Open http://localhost:3000
-
-Submit a prompt, watch the agent pipeline work, and see your app deploy live.
-
-### 5. (Optional) Start Code Autopsy backend
-
+**Terminal 3 — Code Autopsy Backend (port 8001)**
 ```bash
 cd autopsy-backend
+cp ../backend/.env .env    # reuse the same GLM key
 uv sync
 uv run uvicorn main:app --reload --port 8001
 ```
+
+### 3. Open the app
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| Builddy API | http://localhost:8000/docs |
+| Autopsy API | http://localhost:8001/docs |
+| Deployed apps | http://localhost:8000/apps/{id}/ |
+
+Submit a prompt on the dashboard, watch the agent pipeline work in real-time, and see your app deploy live. Then use the **Modify** input to iterate on it.
 
 ---
 
