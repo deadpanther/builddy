@@ -27,6 +27,11 @@ class Autopsy(Base):
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
+    # Revival fields
+    revival_status = Column(String, nullable=True)      # null | "generating" | "complete" | "failed"
+    revival_plan = Column(JSON, nullable=True)
+    revival_features = Column(JSON, nullable=True)
+    revival_created_at = Column(DateTime, nullable=True)
 
 class Evidence(Base):
     __tablename__ = "evidence"

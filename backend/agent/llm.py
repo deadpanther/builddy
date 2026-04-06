@@ -16,10 +16,17 @@ async def chat(
     retries: int = 1,
     model: str | None = None,
     tools: list[dict] | None = None,
+    thinking: bool | None = None,
 ) -> str:
-    """Send a chat completion request to GLM and return the assistant text."""
+    """Send a chat completion request to GLM and return the assistant text.
+
+    *thinking* controls the thinking/reasoning mode.  ``None`` (default) follows
+    the global ``ENABLE_THINKING`` setting; ``True``/``False`` override it.
+    """
     use_model = model or settings.GLM_MODEL
     logger.info("GLM chat → %s (%d messages)", use_model, len(messages))
+
+    enable_thinking = thinking if thinking is not None else settings.ENABLE_THINKING
 
     for attempt in range(retries + 1):
         try:
@@ -30,7 +37,7 @@ async def chat(
                 "max_tokens": max_tokens,
             }
 
-            if settings.ENABLE_THINKING:
+            if enable_thinking:
                 payload["thinking"] = {"type": "enabled"}
 
             if tools:

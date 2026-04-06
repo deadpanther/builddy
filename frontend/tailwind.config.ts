@@ -25,6 +25,11 @@ module.exports = {
         evidence: {
           blue: "#58a6ff",
         },
+        revival: {
+          green: "#00ff41",
+          emerald: "#10b981",
+          purple: "#a78bfa",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

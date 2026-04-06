@@ -193,3 +193,75 @@ body {
   0% { opacity: 0; transform: translateY(12px); }
   100% { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Revival / Resurrection styles ────────────────────────────────── */
+
+.revival-glow {
+  text-shadow: 0 0 12px rgba(0, 255, 65, 0.5), 0 0 30px rgba(0, 255, 65, 0.2);
+}
+
+.difficulty-easy {
+  background: rgba(0, 255, 65, 0.12);
+  color: #00ff41;
+  border: 1px solid rgba(0, 255, 65, 0.25);
+}
+
+.difficulty-moderate {
+  background: rgba(210, 153, 34, 0.12);
+  color: #d29922;
+  border: 1px solid rgba(210, 153, 34, 0.25);
+}
+
+.difficulty-hard {
+  background: rgba(248, 81, 73, 0.12);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.25);
+}
+
+.impact-transformative {
+  background: rgba(167, 139, 250, 0.12);
+  color: #a78bfa;
+  border: 1px solid rgba(167, 139, 250, 0.25);
+}
+
+.impact-high {
+  background: rgba(88, 166, 255, 0.12);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.25);
+}
+
+.impact-moderate {
+  background: rgba(110, 118, 129, 0.12);
+  color: #8b949e;
+  border: 1px solid rgba(110, 118, 129, 0.25);
+}
+
+.effort-small {
+  background: rgba(0, 255, 65, 0.08);
+  color: #00ff41;
+  border: 1px solid rgba(0, 255, 65, 0.2);
+}
+
+.effort-medium {
+  background: rgba(210, 153, 34, 0.08);
+  color: #d29922;
+  border: 1px solid rgba(210, 153, 34, 0.2);
+}
+
+.effort-large {
+  background: rgba(248, 81, 73, 0.08);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.2);
+}
+
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); }
+  14% { transform: scale(1.15); }
+  28% { transform: scale(1); }
+  42% { transform: scale(1.1); }
+  56% { transform: scale(1); }
+}
+
+.revival-heartbeat {
+  animation: heartbeat 2s ease-in-out infinite;
+}

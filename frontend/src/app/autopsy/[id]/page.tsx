@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   getAutopsy,
   getEvidence,
   createAutopsyStream,
+  startRevival,
   type AutopsyReport,
   type EvidenceEntry,
 } from "@/lib/api";
@@ -37,6 +38,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function AutopsyPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [report, setReport] = useState<AutopsyReport | null>(null);
   const [evidence, setEvidence] = useState<EvidenceEntry[]>([]);
   const [liveMessages, setLiveMessages] = useState<string[]>([]);
@@ -351,14 +353,37 @@ export default function AutopsyPage() {
             </Section>
           )}
 
-          {/* Certificate Link */}
-          <div className="flex justify-center pt-4">
+          {/* Actions */}
+          <div className="flex flex-wrap justify-center gap-4 pt-4">
             <a
               href={`/autopsy/${id}/certificate`}
-              className="group rounded border border-autopsy-border-light bg-autopsy-surface px-6 py-3 font-typewriter text-sm uppercase tracking-wider text-neutral-400 transition-all hover:border-terminal-green/40 hover:text-terminal-green hover:shadow-[0_0_24px_rgba(0,255,65,0.08)]"
+              className="rounded border border-autopsy-border-light bg-autopsy-surface px-6 py-3 font-typewriter text-sm uppercase tracking-wider text-neutral-400 transition-all hover:border-terminal-green/40 hover:text-terminal-green hover:shadow-[0_0_24px_rgba(0,255,65,0.08)]"
             >
               View Death Certificate &rarr;
             </a>
+            {report.revival_status === "complete" ? (
+              <a
+                href={`/autopsy/${id}/revive`}
+                className="revival-glow rounded border border-terminal-green/40 bg-terminal-green/10 px-6 py-3 font-typewriter text-sm uppercase tracking-wider text-terminal-green transition-all hover:bg-terminal-green/20 hover:shadow-[0_0_32px_rgba(0,255,65,0.15)]"
+              >
+                View Revival Plan &rarr;
+              </a>
+            ) : (
+              <button
+                onClick={async () => {
+                  try {
+                    await startRevival(id);
+                    router.push(`/autopsy/${id}/revive`);
+                  } catch {
+                    router.push(`/autopsy/${id}/revive`);
+                  }
+                }}
+                disabled={report.revival_status === "generating"}
+                className="revival-glow rounded border border-terminal-green/40 bg-terminal-green/10 px-6 py-3 font-typewriter text-sm uppercase tracking-wider text-terminal-green transition-all hover:bg-terminal-green/20 hover:shadow-[0_0_32px_rgba(0,255,65,0.15)] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {report.revival_status === "generating" ? "Revival In Progress..." : "Revive This Repo"}
+              </button>
+            )}
           </div>
         </div>
       )}

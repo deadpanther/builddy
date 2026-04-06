@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 from config import settings
 from database import init_db, async_session, Autopsy, Evidence
 from agent.forensic import ForensicAnalyst
+from agent.reviver import RevivalPlanner
 
 
 # Store active analyses and their subscribers
@@ -196,6 +197,7 @@ async def get_autopsy(autopsy_id: str):
             "error_message": autopsy.error_message,
             "created_at": autopsy.created_at.isoformat() if autopsy.created_at else None,
             "completed_at": autopsy.completed_at.isoformat() if autopsy.completed_at else None,
+            "revival_status": autopsy.revival_status,
         }
 
 
@@ -251,6 +253,142 @@ async def get_evidence(autopsy_id: str):
             }
             for e in evidence
         ]
+
+
+@app.post("/api/autopsy/{autopsy_id}/revive")
+async def start_revival(autopsy_id: str):
+    async with async_session() as session:
+        result = await session.execute(
+            select(Autopsy).where(Autopsy.id == autopsy_id)
+        )
+        autopsy = result.scalar_one_or_none()
+        if not autopsy:
+            raise HTTPException(404, "Autopsy not found")
+        if autopsy.status != "complete":
+            raise HTTPException(400, "Autopsy must be complete before revival")
+        if autopsy.revival_status == "generating":
+            return {"autopsy_id": autopsy_id, "revival_status": "generating"}
+
+        await session.execute(
+            update(Autopsy).where(Autopsy.id == autopsy_id).values(
+                revival_status="generating",
+                revival_plan=None,
+                revival_features=None,
+                revival_created_at=None,
+            )
+        )
+        await session.commit()
+
+    asyncio.create_task(run_revive(autopsy_id))
+    return {"autopsy_id": autopsy_id, "revival_status": "generating"}
+
+
+async def run_revive(autopsy_id: str):
+    """Background task to generate the revival plan from existing autopsy findings."""
+    async def progress(phase: str, message: str):
+        # Save evidence to DB
+        async with async_session() as session:
+            evidence = Evidence(
+                id=uuid.uuid4().hex[:12],
+                autopsy_id=autopsy_id,
+                phase=phase,
+                observation=message,
+            )
+            session.add(evidence)
+            await session.commit()
+
+        # Broadcast to WebSocket subscribers
+        if autopsy_id in active_analyses:
+            payload = json.dumps({"phase": phase, "message": message})
+            dead = []
+            for ws in active_analyses[autopsy_id]:
+                try:
+                    await ws.send_text(payload)
+                except:
+                    dead.append(ws)
+            for ws in dead:
+                active_analyses[autopsy_id].remove(ws)
+
+    try:
+        # Load existing autopsy data
+        async with async_session() as session:
+            result = await session.execute(
+                select(Autopsy).where(Autopsy.id == autopsy_id)
+            )
+            autopsy = result.scalar_one_or_none()
+
+        if not autopsy:
+            return
+
+        cert = autopsy.death_certificate or {}
+        autopsy_data = {
+            "repo_url": autopsy.repo_url,
+            "repo_name": autopsy.repo_name,
+            "cause_of_death": autopsy.cause_of_death,
+            "contributing_factors": autopsy.contributing_factors or [],
+            "timeline": autopsy.timeline or [],
+            "fatal_commits": autopsy.fatal_commits or [],
+            "findings": autopsy.findings or {},
+            "health_score": cert.get("health_score"),
+            "prognosis": cert.get("prognosis"),
+            "lessons_learned": autopsy.lessons_learned or [],
+        }
+
+        planner = RevivalPlanner(autopsy_id, autopsy_data)
+        revival_plan, revival_features = await planner.generate(progress_callback=progress)
+
+        async with async_session() as session:
+            await session.execute(
+                update(Autopsy).where(Autopsy.id == autopsy_id).values(
+                    revival_status="complete",
+                    revival_plan=revival_plan,
+                    revival_features=revival_features,
+                    revival_created_at=datetime.utcnow(),
+                )
+            )
+            await session.commit()
+
+        # Broadcast completion
+        if autopsy_id in active_analyses:
+            payload = json.dumps({
+                "phase": "revival_complete",
+                "revival_plan": revival_plan,
+                "revival_features": revival_features,
+            })
+            for ws in active_analyses[autopsy_id]:
+                try:
+                    await ws.send_text(payload)
+                except:
+                    pass
+
+    except Exception as e:
+        await progress("error", f"Revival failed: {str(e)[:500]}")
+        async with async_session() as session:
+            await session.execute(
+                update(Autopsy).where(Autopsy.id == autopsy_id).values(
+                    revival_status="failed"
+                )
+            )
+            await session.commit()
+
+
+@app.get("/api/autopsy/{autopsy_id}/revival")
+async def get_revival(autopsy_id: str):
+    async with async_session() as session:
+        result = await session.execute(
+            select(Autopsy).where(Autopsy.id == autopsy_id)
+        )
+        autopsy = result.scalar_one_or_none()
+        if not autopsy:
+            raise HTTPException(404, "Autopsy not found")
+        if not autopsy.revival_status:
+            raise HTTPException(404, "Revival not started")
+        return {
+            "revival_status": autopsy.revival_status,
+            "revival_plan": autopsy.revival_plan,
+            "revival_features": autopsy.revival_features,
+            "revival_created_at": autopsy.revival_created_at.isoformat() if autopsy.revival_created_at else None,
+        }
 
 
 @app.websocket("/api/autopsy/{autopsy_id}/stream")

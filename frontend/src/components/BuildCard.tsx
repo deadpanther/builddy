@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { ExternalLink, Clock, User, Image } from "lucide-react";
+import { ExternalLink, Clock, User, Image, Download, Layers } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
-import { resolveDeployUrl } from "@/lib/api";
+import { resolveDeployUrl, getDownloadUrl } from "@/lib/api";
 import type { Build } from "@/lib/types";
 
 interface BuildCardProps {
@@ -36,6 +36,12 @@ export function BuildCard({ build }: BuildCardProps) {
             <span className="flex items-center gap-1 rounded border border-blue-800 bg-blue-950/50 px-1.5 py-0.5 font-mono text-[9px] text-blue-400">
               <Image className="h-2.5 w-2.5" />
               5V
+            </span>
+          )}
+          {build.complexity && build.complexity !== "simple" && (
+            <span className="flex items-center gap-1 rounded border border-violet-800 bg-violet-950/50 px-1.5 py-0.5 font-mono text-[9px] text-violet-400">
+              <Layers className="h-2.5 w-2.5" />
+              {build.complexity === "fullstack" ? "Full-stack" : "Standard"}
             </span>
           )}
           <StatusBadge status={build.status} />
@@ -82,6 +88,16 @@ export function BuildCard({ build }: BuildCardProps) {
           >
             <ExternalLink className="h-3 w-3" />
             Open App
+          </a>
+        )}
+        {build.zip_url && (
+          <a
+            href={getDownloadUrl(build.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-1 rounded border border-violet-800 bg-violet-950 px-2 py-0.5 font-mono text-[10px] text-violet-400 transition-colors hover:bg-violet-900"
+          >
+            <Download className="h-3 w-3" />
+            Zip
           </a>
         )}
       </div>

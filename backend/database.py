@@ -25,6 +25,15 @@ def _migrate_new_columns():
         ("builds", "thumbnail_url", "TEXT"),
         ("builds", "reasoning_log", "TEXT"),
         ("builds", "parent_build_id", "TEXT"),
+        ("builds", "complexity", "TEXT DEFAULT 'simple'"),
+        ("builds", "file_manifest", "TEXT"),
+        ("builds", "generated_files", "TEXT"),
+        ("builds", "zip_url", "TEXT"),
+        ("builds", "tech_stack", "TEXT"),
+        ("builds", "remix_count", "INTEGER DEFAULT 0"),
+        ("builds", "deploy_provider", "TEXT"),
+        ("builds", "deploy_external_url", "TEXT"),
+        ("builds", "deploy_status", "TEXT"),
     ]
     with Session(engine) as session:
         for table, column, col_type in new_columns:

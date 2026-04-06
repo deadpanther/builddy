@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import type { BuildStatus } from "@/lib/types";
-import { CheckCircle, Circle, AlertCircle, Loader, Terminal, Brain, Search, ImageIcon } from "lucide-react";
+import { CheckCircle, Circle, AlertCircle, Loader, Terminal, Brain, Search, ImageIcon, Layers, Package } from "lucide-react";
 
 const PIPELINE_STEPS: { key: string; title: string; description: string }[] = [
   { key: "planning", title: "Planning", description: "Analyzing request and planning architecture with GLM 5.1" },
@@ -45,6 +45,8 @@ function getStepBadge(step: string): { icon: typeof Brain; label: string; color:
   if (step.startsWith("[thinking]")) return { icon: Brain, label: "Thinking", color: "text-purple-400 bg-purple-950/50 border-purple-800" };
   if (step.startsWith("[research]")) return { icon: Search, label: "Web Search", color: "text-blue-400 bg-blue-950/50 border-blue-800" };
   if (step.startsWith("[image]")) return { icon: ImageIcon, label: "CogView-4", color: "text-amber-400 bg-amber-950/50 border-amber-800" };
+  if (step.startsWith("[manifest]")) return { icon: Layers, label: "Manifest", color: "text-violet-400 bg-violet-950/50 border-violet-800" };
+  if (step.startsWith("[integration]")) return { icon: Package, label: "Integration", color: "text-cyan-400 bg-cyan-950/50 border-cyan-800" };
   return null;
 }
 
@@ -113,7 +115,7 @@ export function AgentSteps({ buildStatus, failedAtStatus, rawSteps }: AgentSteps
           <div className="max-h-64 overflow-y-auto rounded border border-neutral-800 bg-neutral-950 p-3 space-y-1">
             {rawSteps.map((step, i) => {
               const badge = getStepBadge(step);
-              const displayText = step.replace(/^\[(thinking|research|image)\]\s*/, "");
+              const displayText = step.replace(/^\[(thinking|research|image|manifest|integration)\]\s*/, "");
 
               return (
                 <div key={i} className="flex gap-2 text-xs leading-relaxed">

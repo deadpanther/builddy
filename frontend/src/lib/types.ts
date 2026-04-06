@@ -16,6 +16,8 @@ export interface AgentStep {
   timestamp?: string;
 }
 
+export type ComplexityTier = "simple" | "standard" | "fullstack";
+
 export interface Build {
   id: string;
   tweet_id?: string;
@@ -29,8 +31,16 @@ export interface Build {
   deploy_url?: string;
   parent_build_id?: string;
   build_type?: "text" | "screenshot";
+  complexity?: ComplexityTier;
   thumbnail_url?: string;
   reasoning_log?: string; // JSON-encoded reasoning entries
+  file_manifest?: string; // JSON-encoded FileManifestEntry[]
+  generated_files?: string; // JSON-encoded {filepath: content}
+  zip_url?: string;
+  tech_stack?: string; // JSON-encoded TechStack
+  deploy_provider?: string;
+  deploy_external_url?: string;
+  deploy_status?: string;
   steps?: string; // JSON-encoded AgentStep[]
   error?: string;
   created_at: string;
@@ -38,9 +48,37 @@ export interface Build {
   deployed_at?: string;
 }
 
+export interface FileManifestEntry {
+  path: string;
+  purpose: string;
+  order: number;
+  generates_api?: string[];
+  uses_api?: string[];
+  tables?: string[];
+  pages?: string[];
+  dependencies?: string[];
+}
+
+export interface TechStack {
+  frontend: string;
+  backend: string;
+  database: string;
+  deployment: string;
+}
+
 export interface ReasoningEntry {
   stage: string;
   reasoning: string;
+}
+
+export interface VersionEntry {
+  id: string;
+  app_name?: string;
+  prompt?: string;
+  status: string;
+  complexity?: string;
+  created_at: string;
+  parent_build_id?: string;
 }
 
 export interface GalleryApp {
@@ -50,6 +88,12 @@ export interface GalleryApp {
   deploy_url: string;
   tweet_text: string;
   twitter_username?: string;
+  build_type?: string;
+  complexity?: string;
+  tech_stack?: string;
+  zip_url?: string;
+  remix_count?: number;
+  thumbnail_url?: string;
   deployed_at: string;
 }
 
@@ -93,6 +137,44 @@ export interface AutopsyReport {
   error_message: string | null;
   created_at: string | null;
   completed_at: string | null;
+  revival_status: string | null;
+}
+
+export interface RevivalAction {
+  action: string;
+  target: string;
+  rationale: string;
+  difficulty: "easy" | "moderate" | "hard";
+}
+
+export interface RevivalPhase {
+  phase_number: number;
+  title: string;
+  description: string;
+  estimated_effort: string;
+  actions: RevivalAction[];
+}
+
+export interface RevivalPlan {
+  executive_summary: string;
+  priority: "critical" | "high" | "medium" | "low";
+  phases: RevivalPhase[];
+  quick_wins: string[];
+  tech_debt_payoff_order?: string[];
+  architecture_recommendations?: string;
+  testing_strategy?: string;
+  dependency_overhaul?: string;
+  security_fixes?: string[];
+  community_revival_plan?: string;
+}
+
+export interface RevivalFeature {
+  title: string;
+  description: string;
+  why_this_changes_everything: string;
+  technical_approach: string;
+  impact: "transformative" | "high" | "moderate";
+  effort: "small" | "medium" | "large";
 }
 
 export interface Certificate {

@@ -33,7 +33,11 @@ async def gallery_list(
             "tweet_text": b.tweet_text,
             "deploy_url": b.deploy_url,
             "build_type": b.build_type,
+            "complexity": b.complexity,
             "thumbnail_url": b.thumbnail_url,
+            "tech_stack": b.tech_stack,
+            "zip_url": b.zip_url,
+            "remix_count": b.remix_count,
             "deployed_at": str(b.deployed_at) if b.deployed_at else None,
         }
         for b in builds

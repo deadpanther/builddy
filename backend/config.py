@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     TWITTER_ACCESS_TOKEN: str = ""
     TWITTER_ACCESS_SECRET: str = ""
 
+    # Cloud Deploy
+    RAILWAY_API_TOKEN: str = ""
+    GITHUB_TOKEN: str = ""  # for creating temp repos
+    GITHUB_ORG: str = "builddy-apps"  # org/user for temp repos
+
     # Database
     DATABASE_URL: str = "sqlite:///./buildy.db"
 
