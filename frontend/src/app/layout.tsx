@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { UserProvider } from "@auth0/nextjs-auth0/client";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { AuthButton } from "@/components/AuthButton";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -27,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="min-h-screen antialiased">
+        <UserProvider>
         {/* Bento-style nav */}
         <nav className="fixed top-0 left-0 right-0 z-40 border-b" style={{ background: 'var(--nav-bg)', borderColor: 'var(--nav-border)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
           <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
@@ -60,8 +63,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               ))}
             </div>
 
-            {/* Right: theme toggle + status */}
+            {/* Right: auth + theme toggle + status */}
             <div className="flex items-center gap-3">
+              <AuthButton />
               <ThemeToggle />
               <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-tertiary)' }}>
                 <span className="live-dot" />
@@ -72,6 +76,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </nav>
 
         <main className="pt-14">{children}</main>
+        </UserProvider>
       </body>
     </html>
   );
