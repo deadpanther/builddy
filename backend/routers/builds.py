@@ -9,9 +9,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
 from database import get_session
+
+limiter = Limiter(key_func=get_remote_address)
 from models import Build
 from agent.pipeline import run_pipeline, run_modify_pipeline, run_screenshot_pipeline, run_modify_fullstack_pipeline, run_retry_pipeline
 from services.event_bus import subscribe, unsubscribe
@@ -79,7 +83,8 @@ class BuildResponse(BaseModel):
 
 
 @router.post("", response_model=BuildResponse)
-async def create_build(data: BuildCreate, session: Session = Depends(get_session)):
+@limiter.limit("10/minute")
+async def create_build(request: Request, data: BuildCreate, session: Session = Depends(get_session)):
     """Trigger a new text-to-app build."""
     build = Build(
         tweet_id=data.tweet_id,
@@ -98,7 +103,8 @@ async def create_build(data: BuildCreate, session: Session = Depends(get_session
 
 
 @router.post("/from-image", response_model=BuildResponse)
-async def create_build_from_image(data: ScreenshotBuildCreate, session: Session = Depends(get_session)):
+@limiter.limit("5/minute")
+async def create_build_from_image(request: Request, data: ScreenshotBuildCreate, session: Session = Depends(get_session)):
     """Trigger a screenshot-to-app build using GLM-5V-Turbo."""
     # Normalize to list of base64 strings
     raw_images = data.image_base64 if isinstance(data.image_base64, list) else [data.image_base64]
@@ -343,7 +349,9 @@ async def download_build(build_id: str, session: Session = Depends(get_session))
 
 
 @router.post("/{build_id}/cloud-deploy", response_model=BuildResponse)
+@limiter.limit("3/minute")
 async def cloud_deploy_build(
+    request: Request,
     build_id: str,
     data: CloudDeployRequest,
     session: Session = Depends(get_session),
@@ -468,6 +476,10 @@ async def update_build_file(build_id: str, payload: dict, session: Session = Dep
     if not file_path:
         raise HTTPException(status_code=400, detail="file_path is required")
 
+    # Prevent path traversal attacks
+    if ".." in file_path or file_path.startswith("/") or file_path.startswith("\\"):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
     from services.deployer import deploy_html, deploy_project, DEPLOYED_DIR
 
     # Update generated_files or generated_code in DB
@@ -544,7 +556,8 @@ async def get_build_chain(build_id: str, session: Session = Depends(get_session)
 
 
 @router.post("/{build_id}/retry", response_model=BuildResponse)
-async def retry_build(build_id: str, session: Session = Depends(get_session)):
+@limiter.limit("5/minute")
+async def retry_build(request: Request, build_id: str, session: Session = Depends(get_session)):
     """Retry a failed or stuck build from the point of failure."""
     build = session.get(Build, build_id)
     if not build:

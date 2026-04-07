@@ -4,6 +4,7 @@ import subprocess
 import os
 import json
 import re
+import fnmatch as fnmatch_mod
 from collections import Counter
 
 
@@ -15,10 +16,30 @@ class ToolExecutor:
         self.owner = parts[-2] if len(parts) >= 2 else ""
         self.repo = parts[-1].replace(".git", "") if len(parts) >= 1 else ""
 
-    def _run(self, cmd, shell=False, timeout=30) -> str:
+    _EXCLUDE_DIRS = {'.git', 'node_modules', 'venv', '__pycache__', '.venv', 'dist', '.next'}
+
+    def _walk_files(self, extensions=None, patterns=None, prefix='', limit=200):
+        """Walk repo files safely without shell. Returns relative paths."""
+        found = []
+        for root, dirs, filenames in os.walk(self.repo_path):
+            dirs[:] = [d for d in dirs if d not in self._EXCLUDE_DIRS]
+            for f in filenames:
+                rel = os.path.relpath(os.path.join(root, f), self.repo_path)
+                if prefix and not rel.startswith(prefix):
+                    continue
+                if extensions and not any(f.endswith(e) for e in extensions):
+                    continue
+                if patterns and not any(fnmatch_mod.fnmatch(f, p) for p in patterns):
+                    continue
+                found.append(rel)
+                if len(found) >= limit:
+                    return found
+        return found
+
+    def _run(self, cmd, timeout=30) -> str:
         result = subprocess.run(
             cmd, capture_output=True, text=True,
-            cwd=self.repo_path, timeout=timeout, shell=shell,
+            cwd=self.repo_path, timeout=timeout,
         )
         return result.stdout[:8000] if result.returncode == 0 else f"Error: {result.stderr[:500]}"
 
@@ -28,25 +49,19 @@ class ToolExecutor:
     # ── Core tools ───────────────────────────────────────────────────────────
 
     def list_files(self, path_prefix: str = "", extension: str = "") -> str:
-        cmd = "find . -type f -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/venv/*' -not -path '*/__pycache__/*' -not -path '*/.venv/*' -not -path '*/dist/*' -not -path '*/.next/*'"
-        if path_prefix:
-            cmd += f" -path './{path_prefix}*'"
-        if extension:
-            cmd += f" -name '*{extension}'"
-        cmd += " | sort | head -200"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=self.repo_path, timeout=10)
-        files = result.stdout.strip()
+        exts = [extension] if extension else None
+        files = self._walk_files(extensions=exts, prefix=path_prefix, limit=200)
+        files.sort()
         if not files:
             return "No files found"
-        lines = files.split("\n")
         output = []
-        for f in lines[:200]:
-            full = os.path.join(self.repo_path, f.lstrip("./"))
+        for f in files:
+            full = os.path.join(self.repo_path, f)
             try:
                 size = os.path.getsize(full)
-                output.append(f"{f} ({size:,} bytes)")
+                output.append(f"./{f} ({size:,} bytes)")
             except Exception:
-                output.append(f)
+                output.append(f"./{f}")
         return "\n".join(output)
 
     def read_file(self, path: str, lines: int = 200, offset: int = 0) -> str:
@@ -308,13 +323,8 @@ class ToolExecutor:
         test_patterns = ["test_*.py", "*_test.py", "*.test.js", "*.test.ts", "*.test.tsx",
                          "*.spec.js", "*.spec.ts", "*.spec.tsx", "*_test.go", "*_test.rs"]
         test_files = []
-        for pattern in test_patterns:
-            result = subprocess.run(
-                f"find . -name '{pattern}' -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/venv/*' | head -50",
-                shell=True, capture_output=True, text=True, cwd=self.repo_path, timeout=10,
-            )
-            if result.stdout.strip():
-                test_files.extend(result.stdout.strip().split("\n"))
+        matched = self._walk_files(patterns=test_patterns, limit=50)
+        test_files = [f"./{f}" for f in matched]
 
         if test_files:
             output.append(f"Test files found: {len(test_files)}")
@@ -343,11 +353,9 @@ class ToolExecutor:
             output.append("WARNING: No CI/CD configuration found")
 
         # Source-to-test ratio
-        src_result = subprocess.run(
-            "find . -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.tsx' | grep -v node_modules | grep -v .git | grep -v test | grep -v spec | wc -l",
-            shell=True, capture_output=True, text=True, cwd=self.repo_path, timeout=10,
-        )
-        src_count = int(src_result.stdout.strip() or 0)
+        all_src = self._walk_files(extensions=['.py', '.js', '.ts', '.tsx'], limit=5000)
+        src_files = [f for f in all_src if 'test' not in f.lower() and 'spec' not in f.lower()]
+        src_count = len(src_files)
         if src_count > 0 and test_files:
             ratio = len(test_files) / src_count
             output.append(f"Test-to-source ratio: {ratio:.2f} ({len(test_files)} test files / {src_count} source files)")
@@ -408,18 +416,20 @@ class ToolExecutor:
             pass
 
         # File count
-        file_count = self._run("find . -type f -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/venv/*' | wc -l", shell=True).strip()
+        file_count = len(self._walk_files(limit=10000))
         output.append(f"Files in repo: {file_count}")
 
         # Lines of code (approximate)
-        loc = self._run(
-            "find . -type f \\( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.tsx' -o -name '*.jsx' -o -name '*.go' -o -name '*.rs' -o -name '*.java' -o -name '*.rb' \\) "
-            "-not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/venv/*' "
-            "| xargs wc -l 2>/dev/null | tail -1",
-            shell=True
-        ).strip()
-        if loc:
-            output.append(f"Lines of code: {loc}")
+        code_exts = ['.py', '.js', '.ts', '.tsx', '.jsx', '.go', '.rs', '.java', '.rb']
+        code_files = self._walk_files(extensions=code_exts, limit=5000)
+        total_loc = 0
+        for cf in code_files:
+            try:
+                with open(os.path.join(self.repo_path, cf), 'r', errors='replace') as fh:
+                    total_loc += sum(1 for _ in fh)
+            except Exception:
+                pass
+        output.append(f"Lines of code: {total_loc} total")
 
         # Contributors count
         contrib = self._run_git("shortlog", "-sn", "--all").strip()
