@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     # GLM API
     GLM_API_KEY: str = ""
     GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4/"
-    GLM_MODEL: str = "glm-5.1"
+    GLM_MODEL: str = "glm-5.1"               # Best model — used for planning, PRD, QA, review
+    GLM_FAST_MODEL: str = "glm-4.5"         # Higher concurrency (10) — used for bulk file generation
+    GLM_FALLBACK_MODEL: str = "glm-5"       # Fallback if primary is rate-limited
     GLM_VISION_MODEL: str = "glm-5v-turbo"
     GLM_IMAGE_MODEL: str = "cogView-4-250304"
     ENABLE_THINKING: bool = True
@@ -32,6 +34,9 @@ class Settings(BaseSettings):
     RAILWAY_API_TOKEN: str = ""
     GITHUB_TOKEN: str = ""  # for creating temp repos
     GITHUB_ORG: str = "builddy-apps"  # org/user for temp repos
+
+    # Twitter Scraper
+    ENABLE_TWITTER_SCRAPER: bool = True
 
     # Database
     DATABASE_URL: str = "sqlite:///./buildy.db"

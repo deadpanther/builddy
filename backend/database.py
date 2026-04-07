@@ -48,3 +48,8 @@ def _migrate_new_columns():
 def get_session():
     with Session(engine) as session:
         yield session
+
+
+def get_new_session() -> Session:
+    """Create a standalone session (for background tasks, not FastAPI deps)."""
+    return Session(engine)

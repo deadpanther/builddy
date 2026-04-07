@@ -4,12 +4,13 @@ import { useState, useEffect, useRef, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, MessageSquare, ExternalLink, Wand2, Send, GitBranch, Brain, Image, ChevronDown, ChevronUp, Download, Layers, FolderOpen, Shuffle, X, Cloud, Rocket, Globe, Terminal, CheckCircle, AlertCircle, Loader2, RotateCcw } from "lucide-react";
-import { getBuild, resolveDeployUrl, modifyBuild, remixBuild, retryBuild, getDownloadUrl, getBuildFiles, getBuildChain, cloudDeploy, getDeployStatus } from "@/lib/api";
+import { getBuild, resolveDeployUrl, modifyBuild, remixBuild, retryBuild, getDownloadUrl, getBuildFiles, getBuildChain, cloudDeploy, getDeployStatus, updateBuildFile, streamBuild } from "@/lib/api";
 import type { CloudDeployInstructions } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
 import { AgentSteps } from "@/components/AgentSteps";
 import { AppPreview } from "@/components/AppPreview";
 import { CodePreview } from "@/components/CodePreview";
+import { CodeEditor } from "@/components/CodeEditor";
 import { FileExplorer } from "@/components/FileExplorer";
 import { VersionHistory } from "@/components/VersionHistory";
 import { cn } from "@/lib/utils";
@@ -41,9 +42,17 @@ export default function BuildDetailPage() {
   const [projectFiles, setProjectFiles] = useState<Record<string, string> | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [filesLoading, setFilesLoading] = useState(false);
+  const [previewKey, setPreviewKey] = useState(0); // bump to refresh preview after edits
 
   // Version history state
   const [versionChain, setVersionChain] = useState<VersionEntry[]>([]);
+
+  // Live streaming state
+  const [liveStep, setLiveStep] = useState<string | null>(null);
+  const [currentFile, setCurrentFile] = useState<string | null>(null);
+  const [streamingFile, setStreamingFile] = useState<string | null>(null);
+  const [streamingContent, setStreamingContent] = useState<string>("");
+  const sseCleanupRef = useRef<(() => void) | null>(null);
 
   // Cloud deploy state
   const [showDeployDropdown, setShowDeployDropdown] = useState(false);
@@ -83,36 +92,134 @@ export default function BuildDetailPage() {
     }
   }, [build]);
 
-  // Load project files for multi-file builds
+  // SSE: stream pipeline events in real time
   useEffect(() => {
     if (!id || !build) return;
-    const isMultiFile = build.complexity === "standard" || build.complexity === "fullstack";
-    if (!isMultiFile || build.status !== "deployed") return;
-    if (projectFiles) return; // already loaded
+    if (!ACTIVE_STATUSES.has(build.status)) {
+      setLiveStep(null);
+      setCurrentFile(null);
+      return;
+    }
+
+    // Clean up previous SSE
+    if (sseCleanupRef.current) sseCleanupRef.current();
+
+    const cleanup = streamBuild(id, (event) => {
+      if (event.type === "step") {
+        const step = event.data.step as string;
+        setLiveStep(step);
+        const fileMatch = step.match(/Generating file \d+\/\d+: (.+)/);
+        if (fileMatch) setCurrentFile(fileMatch[1]);
+        const doneMatch = step.match(/Generated (.+?) \(/);
+        if (doneMatch) setCurrentFile(null);
+      }
+      if (event.type === "file_streaming_start") {
+        const path = event.data.file_path as string;
+        setStreamingFile(path);
+        setStreamingContent("");
+        setSelectedFile(path);
+        // Switch to files tab
+        setTab("files");
+      }
+      if (event.type === "file_chunk") {
+        const content = event.data.content as string;
+        const path = event.data.file_path as string;
+        const done = event.data.done as boolean;
+        setStreamingContent(content);
+        setStreamingFile(path);
+        setSelectedFile(path);
+        if (done) {
+          // File complete — clear streaming state, refresh files
+          setStreamingFile(null);
+          setStreamingContent("");
+        }
+      }
+      if (event.type === "file_generated") {
+        getBuildFiles(id).then((data) => {
+          setProjectFiles(data.files);
+          const path = event.data.file_path as string;
+          setSelectedFile(path);
+        }).catch(() => {});
+        setCurrentFile(null);
+        setStreamingFile(null);
+        setStreamingContent("");
+      }
+      if (event.type === "status") {
+        getBuild(id).then(setBuild).catch(() => {});
+      }
+      if (event.type === "done") {
+        getBuild(id).then(setBuild).catch(() => {});
+        setLiveStep(null);
+        setCurrentFile(null);
+        setStreamingFile(null);
+        setStreamingContent("");
+      }
+    });
+    sseCleanupRef.current = cleanup;
+
+    return () => { cleanup(); sseCleanupRef.current = null; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, build?.status]);
+
+  // Load project files — during coding (live updates) AND after deployed
+  // Poll every 4s while building so users see files appear in real time
+  const filesIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!id || !build) return;
+    // Only fetch files once build is coding or later
+    const shouldFetch = build.status === "coding" || build.status === "reviewing"
+      || build.status === "deploying" || build.status === "deployed";
+    if (!shouldFetch) return;
+
+    const fetchFiles = () => {
+      getBuildFiles(id)
+        .then((data) => {
+          setProjectFiles(data.files);
+          const paths = Object.keys(data.files);
+          if (paths.length > 0 && !selectedFile) {
+            // Auto-select the LAST file (most recently generated)
+            setSelectedFile(paths[paths.length - 1]);
+          }
+          // If a new file was added, auto-select it
+          if (projectFiles && paths.length > Object.keys(projectFiles).length) {
+            setSelectedFile(paths[paths.length - 1]);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setFilesLoading(false));
+    };
 
     setFilesLoading(true);
-    getBuildFiles(id)
-      .then((data) => {
-        setProjectFiles(data.files);
-        const paths = Object.keys(data.files);
-        if (paths.length > 0 && !selectedFile) {
-          // Auto-select first frontend HTML or README
-          const autoSelect = paths.find(p => p === "frontend/index.html")
-            || paths.find(p => p.endsWith(".html"))
-            || paths.find(p => p === "README.md")
-            || paths[0];
-          setSelectedFile(autoSelect ?? null);
-        }
-      })
-      .catch(() => { /* files endpoint may not exist for older builds */ })
-      .finally(() => setFilesLoading(false));
-  }, [id, build, projectFiles, selectedFile]);
+    fetchFiles();
+
+    // Poll for new files while build is active
+    if (ACTIVE_STATUSES.has(build.status)) {
+      filesIntervalRef.current = setInterval(fetchFiles, 4000);
+    }
+
+    return () => {
+      if (filesIntervalRef.current) {
+        clearInterval(filesIntervalRef.current);
+        filesIntervalRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, build?.status]);
 
   // Fetch version chain when build is deployed
   useEffect(() => {
     if (!id || !build || build.status !== "deployed") return;
     getBuildChain(id).then(setVersionChain).catch(() => {});
   }, [id, build]);
+
+  // Auto-switch to files tab when files start appearing during build
+  useEffect(() => {
+    if (projectFiles && Object.keys(projectFiles).length > 0 && build && ACTIVE_STATUSES.has(build.status) && tab === "preview") {
+      setTab("files");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectFiles]);
 
   const handleModify = async (e: FormEvent) => {
     e.preventDefault();
@@ -223,7 +330,7 @@ export default function BuildDetailPage() {
   })();
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
+    <div className="mx-auto max-w-6xl px-4 py-6 overflow-hidden">
       {/* Back link */}
       <Link
         href="/"
@@ -526,9 +633,9 @@ export default function BuildDetailPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         {/* Left: preview / code / modify */}
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
           {/* Original tweet */}
           <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4">
             <div className="mb-2 flex items-center gap-2">
@@ -545,6 +652,22 @@ export default function BuildDetailPage() {
             </p>
           </div>
 
+          {/* Live pipeline status bar */}
+          {isActive && liveStep && (
+            <div className="rounded-lg border border-emerald-900/50 bg-emerald-950/20 px-4 py-3 flex items-center gap-3 overflow-hidden">
+              <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-xs text-emerald-400 truncate">{liveStep}</p>
+                {currentFile && (
+                  <p className="font-mono text-[10px] text-emerald-600 mt-0.5 flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+                    Generating {currentFile}...
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Preview / Code / Files tabs */}
           {(deployUrl || build.generated_code || projectFiles) && (
             <div>
@@ -560,7 +683,7 @@ export default function BuildDetailPage() {
                 >
                   Live Preview
                 </button>
-                {isMultiFile && projectFiles ? (
+                {projectFiles && (
                   <button
                     onClick={() => setTab("files")}
                     className={`flex items-center gap-1.5 rounded px-3 py-1.5 font-mono text-xs transition-colors ${
@@ -571,40 +694,30 @@ export default function BuildDetailPage() {
                   >
                     <FolderOpen className="h-3 w-3" />
                     Files ({Object.keys(projectFiles).length})
+                    {isActive && (
+                      <span className="ml-1 h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    )}
                   </button>
-                ) : (
+                )}
+                {!projectFiles && build.generated_code && (
                   <button
                     onClick={() => setTab("code")}
-                    disabled={!build.generated_code}
                     className={`rounded px-3 py-1.5 font-mono text-xs transition-colors ${
                       tab === "code"
                         ? "bg-neutral-700 text-neutral-100"
-                        : "text-neutral-500 hover:text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                        : "text-neutral-500 hover:text-neutral-300"
                     }`}
                   >
                     View Code
                   </button>
                 )}
-                {isMultiFile && projectFiles && (
-                  <button
-                    onClick={() => setTab("code")}
-                    disabled={!build.generated_code}
-                    className={`rounded px-3 py-1.5 font-mono text-xs transition-colors ${
-                      tab === "code"
-                        ? "bg-neutral-700 text-neutral-100"
-                        : "text-neutral-500 hover:text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                    }`}
-                  >
-                    Entry HTML
-                  </button>
-                )}
               </div>
 
               {tab === "preview" && deployUrl && (
-                <AppPreview url={deployUrl} hasBackend={isMultiFile} />
+                <AppPreview key={previewKey} url={deployUrl} hasBackend={isMultiFile} />
               )}
               {tab === "files" && projectFiles && (
-                <div className="grid gap-3 lg:grid-cols-[220px_1fr]">
+                <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)] min-w-0 max-w-full overflow-hidden">
                   <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
                     <FileExplorer
                       files={projectFiles}
@@ -613,21 +726,56 @@ export default function BuildDetailPage() {
                     />
                   </div>
                   <div>
-                    {selectedFile && projectFiles[selectedFile] ? (
-                      <CodePreview
+                    {/* Show streaming content if this file is being generated right now */}
+                    {selectedFile && streamingFile === selectedFile && streamingContent ? (
+                      <CodeEditor
+                        code={streamingContent}
+                        language={selectedFile.split(".").pop() ?? "text"}
+                        fileName={`${selectedFile} (generating...)`}
+                        readOnly
+                      />
+                    ) : selectedFile && projectFiles[selectedFile] != null ? (
+                      <CodeEditor
                         code={projectFiles[selectedFile]}
                         language={selectedFile.split(".").pop() ?? "text"}
+                        fileName={selectedFile}
+                        readOnly={isActive}
+                        onSave={isActive ? undefined : async (content) => {
+                          await updateBuildFile(build.id, selectedFile, content);
+                          setProjectFiles((prev) =>
+                            prev ? { ...prev, [selectedFile]: content } : prev
+                          );
+                          setPreviewKey((k) => k + 1);
+                        }}
                       />
                     ) : (
-                      <div className="flex h-64 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900/40">
-                        <p className="font-mono text-xs text-neutral-600">Select a file to view</p>
+                      <div className="flex h-64 items-center justify-center bento-card">
+                        {isActive ? (
+                          <div className="text-center">
+                            <div className="h-5 w-5 mx-auto mb-2 animate-spin rounded-full border-2 border-neutral-700 dark:border-neutral-700 border-t-emerald-500" />
+                            <p className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                              {currentFile ? `Generating ${currentFile}...` : "Generating files..."}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>Select a file to view &amp; edit</p>
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
               )}
               {tab === "code" && build.generated_code && (
-                <CodePreview code={build.generated_code} language="html" />
+                <CodeEditor
+                  code={build.generated_code}
+                  language="html"
+                  fileName="index.html"
+                  onSave={async (content) => {
+                    await updateBuildFile(build.id, "index.html", content);
+                    setBuild((prev) => prev ? { ...prev, generated_code: content } : prev);
+                    setPreviewKey((k) => k + 1);
+                  }}
+                />
               )}
             </div>
           )}
@@ -672,7 +820,7 @@ export default function BuildDetailPage() {
             </form>
           )}
 
-          {/* Error + Retry */}
+          {/* Error + Retry (failed builds) */}
           {build.status === "failed" && build.error && (
             <div className="rounded-lg border border-red-900 bg-red-950/30 p-4">
               <div className="flex items-start justify-between gap-3">
@@ -688,7 +836,6 @@ export default function BuildDetailPage() {
                   onClick={async () => {
                     try {
                       await retryBuild(build.id);
-                      // Restart polling — the page will auto-update
                       if (!intervalRef.current) {
                         intervalRef.current = setInterval(() => {
                           getBuild(build.id).then(setBuild).catch(() => {});
@@ -705,6 +852,38 @@ export default function BuildDetailPage() {
               <p className="mt-2 font-mono text-[10px] text-red-600">
                 Retry resumes from the last successful step — no work is lost.
               </p>
+            </div>
+          )}
+
+          {/* Stuck build — Force Retry (shows for active builds after 90 seconds) */}
+          {isActive && build.status !== "pending" && (
+            <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="mb-1 font-mono text-xs uppercase tracking-wider text-amber-500">
+                    Build seems stuck?
+                  </p>
+                  <p className="font-mono text-sm text-amber-400/80">
+                    If the pipeline hasn&apos;t progressed in a while, you can force a retry. All completed work is preserved.
+                  </p>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      await retryBuild(build.id);
+                      if (!intervalRef.current) {
+                        intervalRef.current = setInterval(() => {
+                          getBuild(build.id).then(setBuild).catch(() => {});
+                        }, 3000);
+                      }
+                    } catch {}
+                  }}
+                  className="flex shrink-0 items-center gap-2 rounded border border-amber-700 bg-amber-900/40 px-4 py-2 font-semibold text-sm text-amber-300 transition-colors hover:bg-amber-900/70"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Force Retry
+                </button>
+              </div>
             </div>
           )}
         </div>

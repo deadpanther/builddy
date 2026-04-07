@@ -6,13 +6,15 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
+from sse_starlette.sse import EventSourceResponse
 from database import get_session
 from models import Build
 from agent.pipeline import run_pipeline, run_modify_pipeline, run_screenshot_pipeline, run_modify_fullstack_pipeline, run_retry_pipeline
+from services.event_bus import subscribe, unsubscribe
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/builds", tags=["builds"])
@@ -160,6 +162,39 @@ async def get_build_steps(build_id: str, session: Session = Depends(get_session)
         raise HTTPException(status_code=404, detail="Build not found")
     steps = json.loads(build.steps) if build.steps else []
     return {"build_id": build_id, "status": build.status, "steps": steps}
+
+
+@router.get("/{build_id}/stream")
+async def stream_build(build_id: str, request: Request):
+    """SSE endpoint — streams pipeline events in real time."""
+
+    async def event_generator():
+        queue = subscribe(build_id)
+        try:
+            # Send initial heartbeat
+            yield {"event": "connected", "data": json.dumps({"build_id": build_id})}
+
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    event_type = event.pop("type", "update")
+                    yield {"event": event_type, "data": json.dumps(event)}
+
+                    # Stop streaming when build reaches terminal state
+                    if event_type == "status" and event.get("status") in ("deployed", "failed"):
+                        yield {"event": "done", "data": json.dumps({"status": event.get("status")})}
+                        break
+                except asyncio.TimeoutError:
+                    # Send keepalive ping
+                    yield {"event": "ping", "data": "{}"}
+        finally:
+            unsubscribe(build_id, queue)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.post("/{build_id}/deploy", response_model=BuildResponse)
@@ -416,6 +451,45 @@ async def get_build_files(build_id: str, session: Session = Depends(get_session)
     raise HTTPException(status_code=404, detail="No files available for this build")
 
 
+@router.put("/{build_id}/files")
+async def update_build_file(build_id: str, payload: dict, session: Session = Depends(get_session)):
+    """Update a single file in a deployed build and redeploy.
+
+    Body: { "file_path": "index.html", "content": "..." }
+    """
+    build = session.get(Build, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Build not found")
+    if build.status != "deployed":
+        raise HTTPException(status_code=400, detail="Can only edit deployed builds")
+
+    file_path = payload.get("file_path", "")
+    content = payload.get("content", "")
+    if not file_path:
+        raise HTTPException(status_code=400, detail="file_path is required")
+
+    from services.deployer import deploy_html, deploy_project, DEPLOYED_DIR
+
+    # Update generated_files or generated_code in DB
+    if build.generated_files:
+        files = json.loads(build.generated_files)
+        files[file_path] = content
+        build.generated_files = json.dumps(files)
+        # Redeploy all files
+        deploy_project(build_id, files)
+    else:
+        # Simple single-file build
+        build.generated_code = content
+        deploy_html(build_id, content)
+
+    build.updated_at = datetime.now(timezone.utc)
+    session.add(build)
+    session.commit()
+    session.refresh(build)
+
+    return {"status": "updated", "file_path": file_path, "build_id": build_id}
+
+
 @router.get("/{build_id}/chain")
 async def get_build_chain(build_id: str, session: Session = Depends(get_session)):
     """Get the full version chain for a build (from original to current)."""
@@ -471,15 +545,18 @@ async def get_build_chain(build_id: str, session: Session = Depends(get_session)
 
 @router.post("/{build_id}/retry", response_model=BuildResponse)
 async def retry_build(build_id: str, session: Session = Depends(get_session)):
-    """Retry a failed build from the point of failure."""
+    """Retry a failed or stuck build from the point of failure."""
     build = session.get(Build, build_id)
     if not build:
         raise HTTPException(status_code=404, detail="Build not found")
-    if build.status != "failed":
-        raise HTTPException(status_code=400, detail=f"Build is not failed (status: {build.status})")
 
-    # Parse failed_at stage from error before clearing it
-    failed_at = "unknown"
+    # Allow retry on failed OR stuck builds (coding/planning/reviewing that hung)
+    terminal_ok = {"deployed"}
+    if build.status in terminal_ok:
+        raise HTTPException(status_code=400, detail=f"Build already deployed")
+
+    # Parse failed_at stage from error or current status
+    failed_at = build.status  # default: resume from current stuck stage
     if build.error:
         match = build.error.split("]")[0].replace("[", "").strip()
         if match:

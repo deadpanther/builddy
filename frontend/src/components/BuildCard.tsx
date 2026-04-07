@@ -14,32 +14,32 @@ export function BuildCard({ build }: BuildCardProps) {
   return (
     <Link
       href={`/build/${build.id}`}
-      className="group block rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 transition-all hover:border-neutral-600 hover:bg-neutral-900"
+      className="group glass-panel shine-hover block p-5 transition-all hover:shadow-glass-hover"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           {build.app_name ? (
-            <div className="mb-1 font-semibold text-neutral-100 truncate">
+            <div className="mb-1 text-base font-semibold text-white truncate group-hover:text-gradient transition-colors">
               {build.app_name}
             </div>
           ) : (
-            <div className="mb-1 font-semibold text-neutral-500 truncate italic text-sm">
+            <div className="mb-1 text-sm font-semibold text-zinc-600 truncate italic">
               Building...
             </div>
           )}
-          <p className="text-sm text-neutral-400 line-clamp-2 leading-relaxed">
+          <p className="text-sm text-zinc-400 line-clamp-2 leading-relaxed">
             {build.tweet_text || build.prompt || "No description"}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {build.build_type === "screenshot" && (
-            <span className="flex items-center gap-1 rounded border border-blue-800 bg-blue-950/50 px-1.5 py-0.5 font-mono text-[9px] text-blue-400">
+            <span className="flex items-center gap-1 rounded-md bg-info-dim border border-info-border px-2 py-0.5 font-mono text-[10px] text-info">
               <Image className="h-2.5 w-2.5" />
               5V
             </span>
           )}
           {build.complexity && build.complexity !== "simple" && (
-            <span className="flex items-center gap-1 rounded border border-violet-800 bg-violet-950/50 px-1.5 py-0.5 font-mono text-[9px] text-violet-400">
+            <span className="flex items-center gap-1 rounded-md bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 font-mono text-[10px] text-brand-300">
               <Layers className="h-2.5 w-2.5" />
               {build.complexity === "fullstack" ? "Full-stack" : "Standard"}
             </span>
@@ -50,13 +50,13 @@ export function BuildCard({ build }: BuildCardProps) {
 
       {/* Thumbnail */}
       {build.thumbnail_url && (
-        <div className="mb-2 overflow-hidden rounded border border-neutral-800">
+        <div className="mb-3 overflow-hidden rounded-lg border border-stroke">
           <img src={build.thumbnail_url} alt="" className="h-16 w-full object-cover" />
         </div>
       )}
 
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 text-xs text-neutral-600">
+        <div className="flex items-center gap-3 text-xs text-zinc-500">
           {build.twitter_username && (
             <span className="flex items-center gap-1">
               <User className="h-3 w-3" />
@@ -71,35 +71,37 @@ export function BuildCard({ build }: BuildCardProps) {
             })}
           </span>
           {isActive && (
-            <span className="flex items-center gap-1 text-emerald-500">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="flex items-center gap-1.5 text-success">
+              <span className="live-dot" />
               Live
             </span>
           )}
         </div>
 
-        {resolveDeployUrl(build.deploy_url) && (
-          <a
-            href={resolveDeployUrl(build.deploy_url)!}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="flex items-center gap-1 rounded border border-emerald-800 bg-emerald-950 px-2 py-0.5 font-mono text-[10px] text-emerald-400 transition-colors hover:bg-emerald-900"
-          >
-            <ExternalLink className="h-3 w-3" />
-            Open App
-          </a>
-        )}
-        {build.zip_url && (
-          <a
-            href={getDownloadUrl(build.id)}
-            onClick={(e) => e.stopPropagation()}
-            className="flex items-center gap-1 rounded border border-violet-800 bg-violet-950 px-2 py-0.5 font-mono text-[10px] text-violet-400 transition-colors hover:bg-violet-900"
-          >
-            <Download className="h-3 w-3" />
-            Zip
-          </a>
-        )}
+        <div className="flex items-center gap-2">
+          {resolveDeployUrl(build.deploy_url) && (
+            <a
+              href={resolveDeployUrl(build.deploy_url)!}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1.5 rounded-lg bg-success-dim border border-success-border px-2.5 py-1 font-mono text-[10px] text-success transition-colors hover:bg-success/20"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Open App
+            </a>
+          )}
+          {build.zip_url && (
+            <a
+              href={getDownloadUrl(build.id)}
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1.5 rounded-lg bg-brand-500/10 border border-brand-500/20 px-2.5 py-1 font-mono text-[10px] text-brand-300 transition-colors hover:bg-brand-500/20"
+            >
+              <Download className="h-3 w-3" />
+              Zip
+            </a>
+          )}
+        </div>
       </div>
     </Link>
   );

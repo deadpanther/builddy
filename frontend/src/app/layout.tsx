@@ -1,57 +1,75 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Builddy — AI App Builder powered by GLM 5.1",
-  description: "Tweet @builddy to build an app. GLM 5.1 generates and deploys it instantly.",
+  description: "Describe an app and GLM 5.1 plans, codes, reviews, and deploys it in minutes.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen antialiased" style={{ background: "#080808", color: "#e6edf3" }}>
-        <nav className="fixed top-0 left-0 right-0 z-40 border-b border-neutral-800 bg-[#080808]/90 backdrop-blur-sm">
-          <div className="mx-auto flex h-12 max-w-7xl items-center justify-between px-4">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Inline script to prevent flash of wrong theme */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                var t = localStorage.getItem('builddy-theme');
+                if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                  document.documentElement.classList.add('dark');
+                }
+              })();
+            `,
+          }}
+        />
+      </head>
+      <body className="min-h-screen antialiased">
+        {/* Bento-style nav */}
+        <nav className="fixed top-0 left-0 right-0 z-40 border-b" style={{ background: 'var(--nav-bg)', borderColor: 'var(--nav-border)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
+          <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
             {/* Logo */}
-            <Link href="/" className="flex items-center gap-2">
-              <span className="rounded bg-violet-600 px-1.5 py-0.5 font-mono text-xs font-bold text-white">
+            <Link href="/" className="flex items-center gap-2.5 group">
+              <span className="flex h-8 w-8 items-center justify-center rounded-bento bg-brand-500 text-white font-bold text-sm shadow-sm transition-all group-hover:shadow-glow group-hover:scale-105">
                 B
               </span>
-              <span className="font-semibold text-neutral-100 tracking-tight">Builddy</span>
+              <span className="text-lg font-display font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                Builddy
+              </span>
             </Link>
 
             {/* Nav links */}
             <div className="flex items-center gap-1">
-              <Link
-                href="/"
-                className="rounded px-3 py-1.5 font-mono text-xs text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/gallery"
-                className="rounded px-3 py-1.5 font-mono text-xs text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
-              >
-                Gallery
-              </Link>
-              <Link
-                href="/autopsy"
-                className="rounded px-3 py-1.5 font-mono text-xs text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
-              >
-                Code Autopsy
-              </Link>
+              {[
+                { href: "/", label: "Dashboard" },
+                { href: "/gallery", label: "Gallery" },
+                { href: "/autopsy", label: "Code Autopsy" },
+              ].map(({ href, label }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className="rounded-xl px-3.5 py-2 text-sm font-medium transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {label}
+                </Link>
+              ))}
             </div>
 
-            {/* Status indicator */}
-            <div className="flex items-center gap-2 font-mono text-[10px] text-neutral-600">
-              <span className="live-dot" />
-              <span>GLM 5.1 Online</span>
+            {/* Right: theme toggle + status */}
+            <div className="flex items-center gap-3">
+              <ThemeToggle />
+              <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                <span className="live-dot" />
+                <span className="font-mono">GLM 5.1</span>
+              </div>
             </div>
           </div>
         </nav>
 
-        <main className="pt-12">{children}</main>
+        <main className="pt-14">{children}</main>
       </body>
     </html>
   );

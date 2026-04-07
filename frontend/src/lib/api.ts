@@ -73,6 +73,35 @@ export async function getBuildFiles(buildId: string): Promise<{ build_id: string
   return res.json();
 }
 
+export async function updateBuildFile(buildId: string, filePath: string, content: string): Promise<{ status: string; file_path: string; build_id: string }> {
+  const res = await fetch(`${API_BASE}/api/builds/${buildId}/files`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_path: filePath, content }),
+  });
+  if (!res.ok) throw new Error(`Failed to save file: ${res.statusText}`);
+  return res.json();
+}
+
+export function streamBuild(buildId: string, onEvent: (event: { type: string; data: Record<string, unknown> }) => void): () => void {
+  const url = `${API_BASE}/api/builds/${buildId}/stream`;
+  const source = new EventSource(url);
+
+  for (const evt of ["step", "file_generated", "file_streaming_start", "file_chunk", "status", "done"]) {
+    source.addEventListener(evt, (e) => {
+      const parsed = { type: evt, data: JSON.parse((e as MessageEvent).data) };
+      if (evt === "done") source.close();
+      onEvent(parsed);
+    });
+  }
+  source.onerror = () => {
+    // EventSource auto-reconnects, but close if too many failures
+  };
+
+  // Return cleanup function
+  return () => source.close();
+}
+
 export async function getBuildChain(buildId: string): Promise<VersionEntry[]> {
   const res = await fetch(`${API_BASE}/api/builds/${buildId}/chain`);
   if (!res.ok) return [];

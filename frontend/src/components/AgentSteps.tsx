@@ -40,12 +40,11 @@ function getStepStatus(
   return "pending";
 }
 
-/** Detect special step prefixes for badge rendering */
 function getStepBadge(step: string): { icon: typeof Brain; label: string; color: string } | null {
-  if (step.startsWith("[thinking]")) return { icon: Brain, label: "Thinking", color: "text-purple-400 bg-purple-950/50 border-purple-800" };
-  if (step.startsWith("[research]")) return { icon: Search, label: "Web Search", color: "text-blue-400 bg-blue-950/50 border-blue-800" };
-  if (step.startsWith("[image]")) return { icon: ImageIcon, label: "CogView-4", color: "text-amber-400 bg-amber-950/50 border-amber-800" };
-  if (step.startsWith("[manifest]")) return { icon: Layers, label: "Manifest", color: "text-violet-400 bg-violet-950/50 border-violet-800" };
+  if (step.startsWith("[thinking]")) return { icon: Brain, label: "Thinking", color: "text-brand-300 bg-brand-500/15 border-brand-500/25" };
+  if (step.startsWith("[research]")) return { icon: Search, label: "Web Search", color: "text-info bg-info-dim border-info-border" };
+  if (step.startsWith("[image]")) return { icon: ImageIcon, label: "CogView-4", color: "text-warning bg-warning-dim border-warning-border" };
+  if (step.startsWith("[manifest]")) return { icon: Layers, label: "Manifest", color: "text-brand-300 bg-brand-500/15 border-brand-500/25" };
   if (step.startsWith("[integration]")) return { icon: Package, label: "Integration", color: "text-cyan-400 bg-cyan-950/50 border-cyan-800" };
   return null;
 }
@@ -71,7 +70,7 @@ export function AgentSteps({ buildStatus, failedAtStatus, rawSteps }: AgentSteps
                 <div
                   className={cn(
                     "mt-1 w-0.5 flex-1",
-                    status === "done" ? "bg-emerald-700" : "bg-neutral-800"
+                    status === "done" ? "bg-success/30" : "bg-surface-200"
                   )}
                   style={{ minHeight: "28px" }}
                 />
@@ -82,20 +81,20 @@ export function AgentSteps({ buildStatus, failedAtStatus, rawSteps }: AgentSteps
               <div
                 className={cn(
                   "font-medium text-sm",
-                  status === "done" && "text-emerald-400",
-                  status === "active" && "text-amber-300",
-                  status === "failed" && "text-red-400",
-                  status === "pending" && "text-neutral-600"
+                  status === "done" && "text-success",
+                  status === "active" && "text-warning",
+                  status === "failed" && "text-danger",
+                  status === "pending" && "text-zinc-600"
                 )}
               >
                 {pipelineStep.title}
                 {status === "active" && (
-                  <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-amber-500 animate-pulse">
+                  <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-warning animate-pulse">
                     in progress
                   </span>
                 )}
               </div>
-              <p className="mt-0.5 text-xs text-neutral-600">
+              <p className="mt-0.5 text-xs text-zinc-600">
                 {pipelineStep.description}
               </p>
             </div>
@@ -105,35 +104,35 @@ export function AgentSteps({ buildStatus, failedAtStatus, rawSteps }: AgentSteps
 
       {/* Raw pipeline log with badges */}
       {rawSteps && rawSteps.length > 0 && (
-        <div className="mt-4 border-t border-neutral-800 pt-4">
+        <div className="mt-4 border-t border-stroke pt-4">
           <div className="mb-2 flex items-center gap-1.5">
-            <Terminal className="h-3 w-3 text-neutral-600" />
-            <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-600">
+            <Terminal className="h-3 w-3 text-zinc-600" />
+            <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-600">
               Pipeline Log
             </span>
           </div>
-          <div className="max-h-64 overflow-y-auto rounded border border-neutral-800 bg-neutral-950 p-3 space-y-1">
+          <div className="max-h-64 overflow-y-auto rounded-lg border border-stroke bg-surface p-3 space-y-1">
             {rawSteps.map((step, i) => {
               const badge = getStepBadge(step);
               const displayText = step.replace(/^\[(thinking|research|image|manifest|integration)\]\s*/, "");
 
               return (
                 <div key={i} className="flex gap-2 text-xs leading-relaxed">
-                  <span className="shrink-0 font-mono text-neutral-700 select-none">
+                  <span className="shrink-0 font-mono text-zinc-700 select-none">
                     {String(i + 1).padStart(2, "0")}
                   </span>
                   {badge ? (
                     <span className="flex items-center gap-1.5 flex-wrap">
-                      <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px]", badge.color)}>
+                      <span className={cn("inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px]", badge.color)}>
                         <badge.icon className="h-2.5 w-2.5" />
                         {badge.label}
                       </span>
-                      <span className="font-mono text-neutral-500">{displayText}</span>
+                      <span className="font-mono text-zinc-500">{displayText}</span>
                     </span>
                   ) : (
                     <span className={cn(
                       "font-mono",
-                      step.toLowerCase().includes("failed") ? "text-red-400" : "text-neutral-500"
+                      step.toLowerCase().includes("failed") ? "text-danger" : "text-zinc-500"
                     )}>
                       {step}
                     </span>
@@ -150,8 +149,8 @@ export function AgentSteps({ buildStatus, failedAtStatus, rawSteps }: AgentSteps
 
 function StepIcon({ status }: { status: "pending" | "active" | "done" | "failed" }) {
   const base = "h-5 w-5 shrink-0 mt-0.5";
-  if (status === "done") return <CheckCircle className={cn(base, "text-emerald-500")} />;
-  if (status === "active") return <Loader className={cn(base, "text-amber-400 animate-spin")} />;
-  if (status === "failed") return <AlertCircle className={cn(base, "text-red-500")} />;
-  return <Circle className={cn(base, "text-neutral-700")} />;
+  if (status === "done") return <CheckCircle className={cn(base, "text-success")} />;
+  if (status === "active") return <Loader className={cn(base, "text-warning animate-spin")} />;
+  if (status === "failed") return <AlertCircle className={cn(base, "text-danger")} />;
+  return <Circle className={cn(base, "text-zinc-700")} />;
 }

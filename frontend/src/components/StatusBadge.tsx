@@ -4,38 +4,38 @@ import type { BuildStatus } from "@/lib/types";
 const STATUS_CONFIG: Record<BuildStatus, { label: string; className: string; dot: string }> = {
   pending: {
     label: "Pending",
-    className: "bg-neutral-900 text-neutral-400 border-neutral-700",
-    dot: "bg-neutral-500",
+    className: "bg-surface-100 text-zinc-400 border-stroke",
+    dot: "bg-zinc-500",
   },
   planning: {
     label: "Planning",
-    className: "bg-blue-950 text-blue-300 border-blue-800",
-    dot: "bg-blue-400",
+    className: "bg-info-dim text-info border-info-border",
+    dot: "bg-info",
   },
   coding: {
     label: "Coding",
-    className: "bg-amber-950 text-amber-300 border-amber-800",
-    dot: "bg-amber-400 animate-pulse",
+    className: "bg-warning-dim text-warning border-warning-border",
+    dot: "bg-warning animate-pulse",
   },
   reviewing: {
     label: "Reviewing",
-    className: "bg-purple-950 text-purple-300 border-purple-800",
-    dot: "bg-purple-400 animate-pulse",
+    className: "bg-brand-500/15 text-brand-300 border-brand-500/25",
+    dot: "bg-brand-400 animate-pulse",
   },
   deploying: {
     label: "Deploying",
-    className: "bg-orange-950 text-orange-300 border-orange-800",
+    className: "bg-orange-500/15 text-orange-400 border-orange-500/25",
     dot: "bg-orange-400 animate-pulse",
   },
   deployed: {
     label: "Deployed",
-    className: "bg-emerald-950 text-emerald-300 border-emerald-800",
-    dot: "bg-emerald-400",
+    className: "bg-success-dim text-success border-success-border",
+    dot: "bg-success",
   },
   failed: {
     label: "Failed",
-    className: "bg-red-950 text-red-300 border-red-800",
-    dot: "bg-red-400",
+    className: "bg-danger-dim text-danger border-danger-border",
+    dot: "bg-danger",
   },
 };
 
@@ -49,7 +49,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider",
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider",
         config.className,
         className
       )}

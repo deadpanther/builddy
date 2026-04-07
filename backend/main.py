@@ -13,11 +13,18 @@ from fastapi.staticfiles import StaticFiles
 from config import settings
 from database import create_db_and_tables
 from routers import builds, twitter, gallery
+from routers.twitter import start_twitter_poll, stop_twitter_poll
 from services.deployer import ensure_deployed_dir
 from services.process_manager import process_manager
+from services.twitter_scraper import scraper as twitter_scraper
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Quiet down noisy loggers so pipeline logs are visible
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("services.twitter").setLevel(logging.CRITICAL)
 
 
 @asynccontextmanager
@@ -27,9 +34,17 @@ async def lifespan(app: FastAPI):
     create_db_and_tables()
     ensure_deployed_dir()
     await process_manager.start_cleanup_loop()
-    logger.info("Database tables created, deployed dir ready, process manager started")
+    await start_twitter_poll()
+    if settings.ENABLE_TWITTER_SCRAPER:
+        twitter_scraper.start()
+        logger.info("Twitter scraper started")
+    else:
+        logger.info("Twitter scraper disabled via ENABLE_TWITTER_SCRAPER=false")
+    logger.info("Database tables created, deployed dir ready")
     yield
     logger.info("Buildy shutting down...")
+    twitter_scraper.stop()
+    await stop_twitter_poll()
     await process_manager.stop_all()
 
 

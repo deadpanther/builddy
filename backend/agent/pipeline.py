@@ -6,20 +6,30 @@ import logging
 from datetime import datetime, timezone
 
 from sqlmodel import Session
-from agent.llm import chat, chat_with_reasoning, vision_chat, generate_image
+from agent.llm import chat, chat_with_reasoning, chat_streaming, vision_chat, generate_image
 from agent.prompts import (
     PARSE_SYSTEM, PLAN_SYSTEM, CODE_SYSTEM, REVIEW_SYSTEM,
     MODIFY_SYSTEM, SCREENSHOT_SYSTEM, IMAGE_PROMPT_TEMPLATE,
     CLASSIFY_SYSTEM, MANIFEST_SYSTEM, FILEGEN_SYSTEM, INTEGRATION_SYSTEM,
     DOCKERFILE_TEMPLATE, DOCKER_COMPOSE_TEMPLATE, PACKAGE_JSON_TEMPLATE,
     README_TEMPLATE, IMPACT_SYSTEM, MODIFY_FILE_SYSTEM, SEED_SYSTEM,
+    PRD_SYSTEM, DESIGN_SYSTEM_PROMPT, QA_SYSTEM, POLISH_SYSTEM, VISUAL_FIX_SYSTEM,
 )
+from agent.components import COMPONENT_LIBRARY
 from services.deployer import deploy_html, deploy_project, create_project_zip
 from database import engine
 from models import Build
 from config import settings
+from services.event_bus import publish as _publish_event
 
 logger = logging.getLogger(__name__)
+
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+STEP_TIMEOUT = 120      # 2 minutes for thinking steps (PRD, plan, QA, etc.)
+FILE_TIMEOUT = 180      # 3 minutes for file generation
+VISUAL_TIMEOUT = 60     # 1 minute for visual validation
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -33,9 +43,14 @@ def _update_build(build_id: str, **kwargs):
             build.updated_at = datetime.now(timezone.utc)
             session.add(build)
             session.commit()
+    # Publish status change to SSE subscribers
+    if "status" in kwargs:
+        _publish_event(build_id, "status", {"status": kwargs["status"]})
 
 
 def _add_step(build_id: str, step: str):
+    short_id = build_id[:8]
+    logger.info("🔧 [%s] %s", short_id, step)
     with Session(engine) as session:
         build = session.get(Build, build_id)
         if build:
@@ -45,6 +60,8 @@ def _add_step(build_id: str, step: str):
             build.updated_at = datetime.now(timezone.utc)
             session.add(build)
             session.commit()
+    # Publish step to SSE subscribers
+    _publish_event(build_id, "step", {"step": step})
 
 
 def _add_reasoning(build_id: str, stage: str, reasoning: str):
@@ -117,15 +134,25 @@ async def parse_request(build_id: str, tweet_text: str) -> dict:
             "prompt": tweet_text.replace("@builddy", "").strip(),
             "app_type": "other",
             "app_name": "my-app",
+            "delight_features": [],
+            "aesthetic": "minimal",
         }
+
+    # Enrich the prompt with delight features if present
+    delight = parsed.get("delight_features", [])
+    enriched_prompt = parsed.get("prompt", tweet_text)
+    if delight:
+        enriched_prompt += "\n\nBonus features to include: " + ", ".join(delight)
 
     _update_build(
         build_id,
-        prompt=parsed.get("prompt", tweet_text),
+        prompt=enriched_prompt,
         app_name=parsed.get("app_name", "my-app"),
         app_description=parsed.get("prompt", ""),
     )
-    _add_step(build_id, f"Parsed: {parsed.get('app_name', 'app')} ({parsed.get('app_type', 'other')})")
+    _add_step(build_id, f"Parsed: {parsed.get('app_name', 'app')} ({parsed.get('app_type', 'other')}) — aesthetic: {parsed.get('aesthetic', 'minimal')}")
+    if delight:
+        _add_step(build_id, f"Delight features: {', '.join(delight)}")
     return parsed
 
 
@@ -185,18 +212,53 @@ async def plan_app(build_id: str, prompt: str) -> str:
 
 
 async def generate_code(build_id: str, prompt: str, plan: str) -> str:
-    """Step 3: Generate the complete HTML/CSS/JS code with thinking mode."""
+    """Step 3: Generate the complete HTML/CSS/JS code with thinking mode + web search."""
     _update_build(build_id, status="coding")
-    _add_step(build_id, "Generating code with GLM 5.1...")
+    _add_step(build_id, "Generating code with GLM 5.1 (web search + thinking)...")
 
-    result = await chat_with_reasoning(
-        messages=[
-            {"role": "user", "content": f"Generate a complete single-file HTML app (with inline CSS and JS, no external dependencies) for: {prompt}\n\nWrap your code in ```html fences."},
-        ],
-        temperature=0.7,
-        max_tokens=16384,
-        retries=2,
+    # Keep prompt lean — component library is in CODE_SYSTEM, don't duplicate
+    user_content = (
+        f"Build this app: {prompt}\n\n"
+        f"Follow this architecture plan:\n{plan}\n\n"
+        f"Generate the COMPLETE single-file HTML app using Tailwind CSS CDN. "
+        f"Include: dark mode toggle, animations (fade-in, hover scale), empty states, toast notifications. "
+        f"Wrap your code in ```html fences."
     )
+
+    # Enable web search so GLM can look up Tailwind patterns, best practices, etc.
+    tools = None
+    if settings.ENABLE_WEB_SEARCH:
+        tools = [
+            {
+                "type": "web_search",
+                "web_search": {
+                    "enable": "True",
+                    "search_engine": "search-prime",
+                    "search_result": "True",
+                    "count": "3",
+                    "search_recency_filter": "noLimit",
+                },
+            }
+        ]
+        _add_step(build_id, "[skill:web-search] Searching for UI patterns and best practices...")
+
+    try:
+        result = await asyncio.wait_for(
+            chat_with_reasoning(
+                messages=[
+                    {"role": "system", "content": CODE_SYSTEM},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.7,
+                max_tokens=16384,
+                retries=2,
+                tools=tools,
+            ),
+            timeout=STEP_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        _add_step(build_id, "Code generation timed out — falling back...")
+        result = {"content": "", "reasoning": ""}
 
     code = _strip_fences(result["content"])
     reasoning = result["reasoning"]
@@ -206,11 +268,12 @@ async def generate_code(build_id: str, prompt: str, plan: str) -> str:
         _add_step(build_id, f"[thinking] GLM reasoned through implementation ({len(reasoning)} chars)")
 
     if not code:
-        # Fallback: try with thinking explicitly disabled
-        _add_step(build_id, "Retrying code generation (thinking disabled)...")
+        # Fallback 1: same model, no thinking, no web search
+        _add_step(build_id, "Retrying code generation (thinking disabled, no web search)...")
         code_text = await chat(
             messages=[
-                {"role": "user", "content": f"Generate a complete single-file HTML app (with inline CSS and JS, no external dependencies) for: {prompt}\n\nWrap your code in ```html fences."},
+                {"role": "system", "content": CODE_SYSTEM},
+                {"role": "user", "content": user_content},
             ],
             temperature=0.7,
             max_tokens=16384,
@@ -220,7 +283,28 @@ async def generate_code(build_id: str, prompt: str, plan: str) -> str:
         code = _strip_fences(code_text)
 
     if not code:
-        raise ValueError("GLM returned empty code after retries — cannot proceed")
+        # Fallback 2: fast model, no thinking — most reliable
+        _add_step(build_id, "Retrying with fast model (GLM-4.5)...")
+        code_text = await chat(
+            messages=[
+                {"role": "system", "content": CODE_SYSTEM},
+                {"role": "user", "content": (
+                    f"Build this app: {prompt}\n\n"
+                    f"Follow this architecture plan:\n{plan}\n\n"
+                    f"Generate the COMPLETE single-file HTML app using Tailwind CSS CDN. "
+                    f"Wrap your code in ```html fences."
+                )},
+            ],
+            temperature=0.7,
+            max_tokens=8192,
+            retries=2,
+            thinking=False,
+            model=settings.GLM_FAST_MODEL,
+        )
+        code = _strip_fences(code_text)
+
+    if not code:
+        raise ValueError("GLM returned empty code after all retries — cannot proceed")
 
     _update_build(build_id, generated_code=code)
     _add_step(build_id, f"Code generated ({len(code)} chars)")
@@ -272,6 +356,284 @@ async def generate_thumbnail(build_id: str, app_description: str):
         _add_step(build_id, f"[image] Thumbnail generated with CogView-4")
     else:
         _add_step(build_id, "Thumbnail generation skipped")
+
+
+# ── Multi-Agent Pipeline Steps (PRD → Design → QA → Polish → Visual) ────────
+
+async def write_prd(build_id: str, prompt: str) -> dict:
+    """PM Agent: Write a Product Requirements Document with acceptance criteria."""
+    _add_step(build_id, "[agent:pm] Writing product requirements...")
+
+    try:
+        result = await asyncio.wait_for(
+            chat_with_reasoning(
+                messages=[
+                    {"role": "system", "content": PRD_SYSTEM},
+                    {"role": "user", "content": f"Write a PRD for this app:\n\n{prompt}"},
+                ],
+                temperature=0.5,
+            ),
+            timeout=STEP_TIMEOUT,
+        )
+        prd_text = result["content"]
+        reasoning = result["reasoning"]
+
+        if reasoning:
+            _add_reasoning(build_id, "prd", reasoning)
+            _add_step(build_id, f"[thinking] PM reasoned through requirements ({len(reasoning)} chars)")
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.warning("PRD with reasoning failed/timed out, falling back: %s", e)
+        _add_step(build_id, "PRD thinking timed out — retrying without thinking...")
+        try:
+            prd_text = await asyncio.wait_for(
+                chat(
+                    messages=[
+                        {"role": "system", "content": PRD_SYSTEM},
+                        {"role": "user", "content": f"Write a PRD for this app:\n\n{prompt}"},
+                    ],
+                    temperature=0.5,
+                    thinking=False,
+                    model=settings.GLM_FAST_MODEL,
+                ),
+                timeout=STEP_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            prd_text = ""
+
+    try:
+        text = prd_text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+        prd = json.loads(text)
+    except (json.JSONDecodeError, IndexError):
+        prd = {"product_name": "App", "user_stories": [], "edge_cases": [], "delight_features": []}
+        _add_step(build_id, "PRD parsing failed — using minimal spec")
+
+    stories = prd.get("user_stories", [])
+    criteria_count = sum(len(s.get("acceptance_criteria", [])) for s in stories)
+    _add_step(build_id, f"[agent:pm] PRD complete: {len(stories)} user stories, {criteria_count} acceptance criteria")
+    return prd
+
+
+async def create_design_system(build_id: str, prompt: str, prd: dict) -> dict:
+    """Design Agent: Create a visual design system for the app."""
+    _add_step(build_id, "[agent:designer] Creating design system...")
+
+    tools = None
+    if settings.ENABLE_WEB_SEARCH:
+        tools = [
+            {
+                "type": "web_search",
+                "web_search": {
+                    "enable": "True",
+                    "search_engine": "search-prime",
+                    "search_result": "True",
+                    "count": "2",
+                    "search_recency_filter": "noLimit",
+                },
+            }
+        ]
+        _add_step(build_id, "[skill:web-search] Researching design trends...")
+
+    try:
+        result = await asyncio.wait_for(
+            chat_with_reasoning(
+                messages=[
+                    {"role": "system", "content": DESIGN_SYSTEM_PROMPT},
+                    {"role": "user", "content": (
+                        f"Create a design system for this app:\n\n{prompt}\n\n"
+                        f"PRD summary: {json.dumps(prd, indent=2)[:2000]}"
+                    )},
+                ],
+                temperature=0.6,
+                tools=tools,
+            ),
+            timeout=STEP_TIMEOUT,
+        )
+        design_text = result["content"]
+        reasoning = result["reasoning"]
+
+        if reasoning:
+            _add_reasoning(build_id, "design", reasoning)
+            _add_step(build_id, f"[thinking] Designer reasoned through visual language ({len(reasoning)} chars)")
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.warning("Design system failed/timed out, falling back: %s", e)
+        _add_step(build_id, "Design agent timed out — retrying with fast model...")
+        try:
+            design_text = await asyncio.wait_for(
+                chat(
+                    messages=[
+                        {"role": "system", "content": DESIGN_SYSTEM_PROMPT},
+                        {"role": "user", "content": f"Create a design system for: {prompt}"},
+                    ],
+                    temperature=0.6,
+                    thinking=False,
+                    model=settings.GLM_FAST_MODEL,
+                ),
+                timeout=STEP_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            design_text = ""
+
+    try:
+        text = design_text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+        design = json.loads(text)
+    except (json.JSONDecodeError, IndexError):
+        design = {"palette": {}, "tailwind_config": "{}", "component_choices": []}
+        _add_step(build_id, "Design system parsing failed — using defaults")
+
+    components = design.get("component_choices", [])
+    _add_step(build_id, f"[agent:designer] Design system created: {', '.join(components[:5])}")
+    return design
+
+
+async def qa_validate(build_id: str, code: str, prd: dict) -> str:
+    """QA Agent: Validate code against PRD acceptance criteria and fix issues."""
+    _add_step(build_id, "[agent:qa] Validating against acceptance criteria...")
+
+    stories_text = json.dumps(prd.get("user_stories", []), indent=2)[:4000]
+    edge_cases = json.dumps(prd.get("edge_cases", []))
+    delight = json.dumps(prd.get("delight_features", []))
+
+    try:
+        result = await asyncio.wait_for(
+            chat_with_reasoning(
+                messages=[
+                    {"role": "system", "content": QA_SYSTEM},
+                    {"role": "user", "content": (
+                        f"PRD USER STORIES:\n{stories_text}\n\n"
+                        f"EDGE CASES: {edge_cases}\n\n"
+                        f"DELIGHT FEATURES: {delight}\n\n"
+                        f"CODE TO VALIDATE:\n```html\n{code}\n```"
+                    )},
+                ],
+                temperature=0.2,
+                max_tokens=16384,
+            ),
+            timeout=STEP_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        _add_step(build_id, "[agent:qa] Timed out — skipping QA (keeping current code)")
+        return code
+
+    qa_output = result["content"]
+    reasoning = result["reasoning"]
+
+    if reasoning:
+        _add_reasoning(build_id, "qa", reasoning)
+        _add_step(build_id, f"[thinking] QA traced through {len(prd.get('user_stories', []))} user stories ({len(reasoning)} chars)")
+
+    validated = _strip_fences(qa_output)
+    if not validated:
+        _add_step(build_id, "QA returned empty — keeping current code")
+        return code
+
+    _update_build(build_id, generated_code=validated)
+    _add_step(build_id, "[agent:qa] Validation complete — issues fixed")
+    return validated
+
+
+async def polish_pass(build_id: str, code: str) -> str:
+    """Polish Agent: Final pass for animations, empty states, dark mode, micro-interactions."""
+    _add_step(build_id, "[agent:polish] Applying final polish (animations, empty states, dark mode)...")
+
+    try:
+        result = await asyncio.wait_for(
+            chat_with_reasoning(
+                messages=[
+                    {"role": "system", "content": POLISH_SYSTEM},
+                    {"role": "user", "content": f"Polish this app:\n\n```html\n{code}\n```"},
+                ],
+                temperature=0.3,
+                max_tokens=16384,
+            ),
+            timeout=STEP_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        _add_step(build_id, "[agent:polish] Timed out — skipping polish (keeping current code)")
+        return code
+
+    polished = _strip_fences(result["content"])
+    reasoning = result["reasoning"]
+
+    if reasoning:
+        _add_reasoning(build_id, "polish", reasoning)
+        _add_step(build_id, f"[thinking] Polish agent reviewed every detail ({len(reasoning)} chars)")
+
+    if not polished:
+        _add_step(build_id, "Polish returned empty — keeping current code")
+        return code
+
+    _update_build(build_id, generated_code=polished)
+    _add_step(build_id, f"[agent:polish] Polished ({len(polished)} chars)")
+    return polished
+
+
+async def visual_validate(build_id: str, code: str) -> str:
+    """Visual Feedback Loop: Load in browser, screenshot, fix issues with GLM-5V-Turbo."""
+    _add_step(build_id, "[agent:visual] Loading app in headless browser...")
+
+    try:
+        from services.visual_validator import validate_html
+
+        result = await asyncio.wait_for(validate_html(code), timeout=VISUAL_TIMEOUT)
+        errors = result["console_errors"]
+        screenshot_b64 = result["screenshot_base64"]
+        has_errors = result["has_errors"]
+
+        if not screenshot_b64:
+            _add_step(build_id, "Visual validation: could not capture screenshot — skipping")
+            return code
+
+        if has_errors:
+            error_list = "\n".join(f"  - {e}" for e in errors[:10])
+            _add_step(build_id, f"[agent:visual] Found {len(errors)} console error(s):\n{error_list}")
+        else:
+            _add_step(build_id, "[agent:visual] No console errors detected")
+
+        # Feed screenshot + errors to GLM-5V-Turbo for fixes
+        _add_step(build_id, "[agent:visual] Sending screenshot to GLM-5V-Turbo for visual review...")
+
+        error_context = ""
+        if errors:
+            error_context = f"\n\nCONSOLE ERRORS FOUND:\n" + "\n".join(errors[:10])
+
+        fix_result = await asyncio.wait_for(
+            vision_chat(
+                images_base64=[screenshot_b64],
+                text_prompt=(
+                    f"{VISUAL_FIX_SYSTEM}\n\n"
+                    f"Here is the screenshot of the app as it currently renders.{error_context}\n\n"
+                    f"CURRENT SOURCE CODE:\n```html\n{code}\n```\n\n"
+                    f"Fix ALL visual issues and console errors. Output the complete fixed HTML in ```html fences."
+                ),
+                temperature=0.3,
+                max_tokens=16384,
+            ),
+            timeout=STEP_TIMEOUT,
+        )
+
+        fixed = _strip_fences(fix_result["content"])
+        reasoning = fix_result["reasoning"]
+
+        if reasoning:
+            _add_reasoning(build_id, "visual_fix", reasoning)
+            _add_step(build_id, f"[thinking] Visual QA analyzed the screenshot ({len(reasoning)} chars)")
+
+        if fixed and len(fixed) > 100:
+            _update_build(build_id, generated_code=fixed)
+            _add_step(build_id, "[agent:visual] Visual fixes applied")
+            return fixed
+        else:
+            _add_step(build_id, "[agent:visual] No visual fixes needed — app looks good")
+            return code
+
+    except Exception as e:
+        logger.warning("Visual validation failed (non-fatal): %s", e)
+        _add_step(build_id, f"Visual validation skipped: {str(e)[:100]}")
+        return code
 
 
 # ── Multi-File Pipeline Steps ────────────────────────────────────────────────
@@ -385,31 +747,110 @@ async def generate_file(
     file_path = file_entry["path"]
     _add_step(build_id, f"Generating file {file_index + 1}/{total_files}: {file_path}")
 
-    # Build context from previously generated files
+    # Build context from previously generated files — only include DEPENDENCIES
+    # to avoid sending 200K+ of irrelevant context that slows generation
+    deps = set(file_entry.get("dependencies", []))
     context_parts = []
     for prev_path, prev_content in generated_so_far.items():
-        context_parts.append(f"--- FILE: {prev_path} ---\n{prev_content}\n--- END FILE ---")
+        if prev_path in deps:
+            # Full content for direct dependencies
+            context_parts.append(f"--- FILE: {prev_path} ---\n{prev_content}\n--- END FILE ---")
+        elif prev_path.endswith((".js", ".html")) and len(prev_content) < 2000:
+            # Small files get included in full
+            context_parts.append(f"--- FILE: {prev_path} ---\n{prev_content}\n--- END FILE ---")
+        else:
+            # Large non-dependency files: include first 80 lines only (API routes, schema, exports)
+            lines = prev_content.split("\n")
+            summary = "\n".join(lines[:80])
+            if len(lines) > 80:
+                summary += f"\n... ({len(lines) - 80} more lines)"
+            context_parts.append(f"--- FILE: {prev_path} (summary) ---\n{summary}\n--- END FILE ---")
     context_str = "\n\n".join(context_parts) if context_parts else "(No files generated yet)"
+
+    # Inject a slim component reference for the FIRST HTML file only (index.html)
+    # Other HTML files get just the CSS animations + dark mode snippet
+    component_ref = ""
+    if file_path == "frontend/index.html":
+        component_ref = f"\n\n{COMPONENT_LIBRARY}\n\nUse the component patterns above as building blocks for the UI."
+    elif file_path.startswith("frontend/") and file_path.endswith(".html"):
+        component_ref = (
+            "\n\nINCLUDE THESE IN YOUR HTML:\n"
+            "- <script src='https://cdn.tailwindcss.com'></script>\n"
+            "- Dark mode: use dark: prefix, add toggle calling toggleDark()\n"
+            "- CSS animations: @keyframes fade-in, scale-in, slide-up (see app's index.html for reference)\n"
+            "- Match the SAME header/nav/styling as index.html for consistency\n"
+        )
+
+    # Slim manifest: only include file list overview + tech stack, not full details
+    slim_manifest = {
+        "app_name": manifest.get("app_name"),
+        "description": manifest.get("description"),
+        "tech_stack": manifest.get("tech_stack"),
+        "features": manifest.get("features"),
+        "files": [{"path": f["path"], "purpose": f["purpose"]} for f in manifest.get("files", [])],
+    }
 
     user_content = (
         f"Generate the file: {file_path}\n\n"
         f"PURPOSE: {file_entry.get('purpose', 'See manifest')}\n\n"
-        f"FULL PROJECT MANIFEST:\n{json.dumps(manifest, indent=2)}\n\n"
-        f"PREVIOUSLY GENERATED FILES:\n{context_str}"
+        f"PROJECT OVERVIEW:\n{json.dumps(slim_manifest, indent=2)}\n\n"
+        f"REFERENCE FILES:\n{context_str}"
+        f"{component_ref}"
     )
 
-    result = await chat_with_reasoning(
-        messages=[
-            {"role": "system", "content": FILEGEN_SYSTEM},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.5,
-        max_tokens=16384,
-        retries=2,
-    )
+    # Only enable web search for the MAIN frontend page (index.html), not every file
+    tools = None
+    is_main_page = file_path == "frontend/index.html"
+    if is_main_page and settings.ENABLE_WEB_SEARCH:
+        tools = [
+            {
+                "type": "web_search",
+                "web_search": {
+                    "enable": "True",
+                    "search_engine": "search-prime",
+                    "search_result": "True",
+                    "count": "2",
+                    "search_recency_filter": "noLimit",
+                },
+            }
+        ]
+        _add_step(build_id, f"[skill:web-search] Researching UI patterns for {file_path}...")
 
-    code = result["content"].strip()
-    reasoning = result["reasoning"]
+    # Stream file generation so the frontend sees code appear in real time
+    # Publish chunks every ~500 chars to avoid flooding the event bus
+    _last_publish_len = 0
+
+    async def _on_chunk(accumulated: str):
+        nonlocal _last_publish_len
+        if len(accumulated) - _last_publish_len >= 300:
+            _publish_event(build_id, "file_chunk", {
+                "file_path": file_path,
+                "content": accumulated,
+                "done": False,
+            })
+            _last_publish_len = len(accumulated)
+
+    # Publish that we're starting this file
+    _publish_event(build_id, "file_streaming_start", {"file_path": file_path})
+
+    code = ""
+    try:
+        raw = await asyncio.wait_for(
+            chat_streaming(
+                messages=[
+                    {"role": "system", "content": FILEGEN_SYSTEM},
+                    {"role": "user", "content": user_content},
+                ],
+                on_chunk=_on_chunk,
+                temperature=0.5,
+                max_tokens=8192,
+                model=settings.GLM_FAST_MODEL,
+            ),
+            timeout=FILE_TIMEOUT,
+        )
+        code = raw.strip()
+    except asyncio.TimeoutError:
+        _add_step(build_id, f"Streaming timed out for {file_path} — trying fallback...")
 
     # Strip markdown fences if present
     if code.startswith("```"):
@@ -418,23 +859,36 @@ async def generate_file(
     if code.endswith("```"):
         code = code[:-3].strip()
 
-    if reasoning:
-        _add_reasoning(build_id, f"generating_{file_path}", reasoning)
-
     if not code:
-        # Fallback with thinking explicitly disabled
-        _add_step(build_id, f"Retrying {file_path} (thinking disabled)...")
-        code = await chat(
-            messages=[
-                {"role": "system", "content": FILEGEN_SYSTEM},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.5,
-            max_tokens=16384,
-            thinking=False,
-            retries=1,
-        )
-        code = _strip_fences(code)
+        # Fallback: non-streaming with fallback model
+        _add_step(build_id, f"Retrying {file_path} (non-streaming fallback)...")
+        try:
+            fallback_result = await asyncio.wait_for(
+                chat(
+                    messages=[
+                        {"role": "system", "content": FILEGEN_SYSTEM},
+                        {"role": "user", "content": user_content},
+                    ],
+                    temperature=0.5,
+                    max_tokens=8192,
+                    thinking=False,
+                    retries=2,
+                    model=settings.GLM_FALLBACK_MODEL,
+                ),
+                timeout=FILE_TIMEOUT,
+            )
+            code = _strip_fences(fallback_result)
+        except asyncio.TimeoutError:
+            _add_step(build_id, f"Fallback also timed out for {file_path}")
+            code = ""
+
+    # Publish final content
+    if code:
+        _publish_event(build_id, "file_chunk", {
+            "file_path": file_path,
+            "content": code,
+            "done": True,
+        })
 
     if not code:
         raise ValueError(f"GLM returned empty content for {file_path}")
@@ -468,35 +922,101 @@ async def generate_all_files(build_id: str, manifest: dict, existing_files: dict
         generated[file_path] = content
         # Save after each file so retry can resume from here
         _update_build(build_id, generated_files=json.dumps(generated))
+        # Notify SSE clients that a new file is ready
+        _publish_event(build_id, "file_generated", {
+            "file_path": file_path,
+            "file_count": len(generated),
+            "total_files": total,
+            "chars": len(content),
+        })
+        # Small delay between files to avoid rate limit bursting
+        if i < total - 1:
+            await asyncio.sleep(1)
 
     _add_step(build_id, f"All {total} files generated ({sum(len(v) for v in generated.values())} total chars)")
     return generated
 
 
-async def integration_review(build_id: str, manifest: dict, all_files: dict[str, str]) -> dict[str, str]:
-    """Review all files together for cross-file consistency issues."""
-    _update_build(build_id, status="reviewing")
-    _add_step(build_id, "Running integration review across all files...")
+def _extract_interface(content: str, max_lines: int = 50) -> str:
+    """Extract the 'interface' of a file — imports, exports, routes, schema.
 
-    # Build full file listing for context
-    file_sections = []
+    For backend files: first 50 lines (schema + route definitions).
+    For frontend files: first 30 lines (imports + structure) + any fetch() lines.
+    """
+    lines = content.split("\n")
+    head = lines[:max_lines]
+
+    # Also grab lines with API routes, fetch calls, table definitions
+    important = []
+    for i, line in enumerate(lines[max_lines:], start=max_lines):
+        stripped = line.strip()
+        if any(kw in stripped for kw in [
+            "app.get(", "app.post(", "app.put(", "app.delete(",
+            "router.", "fetch(", "CREATE TABLE", "export ", "import ",
+            "module.exports",
+        ]):
+            important.append(line)
+        if len(important) > 30:
+            break
+
+    result = "\n".join(head)
+    if important:
+        result += "\n\n// ... key definitions ...\n" + "\n".join(important)
+    if len(lines) > max_lines:
+        result += f"\n\n// ... ({len(lines) - max_lines} more lines)"
+    return result
+
+
+async def integration_review(build_id: str, manifest: dict, all_files: dict[str, str]) -> dict[str, str]:
+    """Review files for cross-file consistency using INTERFACES only (fast).
+
+    Only sends the first ~50 lines of each file + key definitions like routes,
+    fetch calls, and table schemas. Fixes are applied per-file.
+    """
+    _update_build(build_id, status="reviewing")
+    _add_step(build_id, "Running quick integration review (interfaces only)...")
+
+    # Build slim context — interfaces only, not full file content
+    interface_sections = []
     for path, content in all_files.items():
-        file_sections.append(f"--- FILE: {path} ---\n{content}\n--- END FILE ---")
-    all_files_str = "\n\n".join(file_sections)
+        # Skip deployment files — they don't have integration issues
+        if path in ("Dockerfile", "docker-compose.yml", "package.json", "README.md", ".env.example", ".gitignore"):
+            continue
+        interface = _extract_interface(content)
+        interface_sections.append(f"--- FILE: {path} ---\n{interface}\n--- END FILE ---")
+
+    interfaces_str = "\n\n".join(interface_sections)
+    total_chars = len(interfaces_str)
+    _add_step(build_id, f"Reviewing {len(interface_sections)} file interfaces ({total_chars} chars context)")
+
+    # Slim manifest
+    slim_manifest = {
+        "app_name": manifest.get("app_name"),
+        "tech_stack": manifest.get("tech_stack"),
+        "features": manifest.get("features"),
+        "files": [{"path": f["path"], "purpose": f["purpose"]} for f in manifest.get("files", [])],
+    }
 
     user_content = (
-        f"PROJECT MANIFEST:\n{json.dumps(manifest, indent=2)}\n\n"
-        f"ALL GENERATED FILES:\n{all_files_str}"
+        f"PROJECT:\n{json.dumps(slim_manifest, indent=2)}\n\n"
+        f"FILE INTERFACES (first ~50 lines + key definitions of each file):\n{interfaces_str}\n\n"
+        f"Check for API route mismatches, import/export mismatches, and DB schema mismatches. "
+        f"Only flag REAL bugs. For each fix, output the COMPLETE corrected file."
     )
 
     try:
-        result = await chat_with_reasoning(
-            messages=[
-                {"role": "system", "content": INTEGRATION_SYSTEM},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.2,
-            max_tokens=16384,
+        result = await asyncio.wait_for(
+            chat_with_reasoning(
+                messages=[
+                    {"role": "system", "content": INTEGRATION_SYSTEM},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.2,
+                max_tokens=8192,
+                model=settings.GLM_FAST_MODEL,
+                fallback_model=settings.GLM_FALLBACK_MODEL,
+            ),
+            timeout=STEP_TIMEOUT,
         )
 
         review_text = result["content"].strip()
@@ -504,9 +1024,8 @@ async def integration_review(build_id: str, manifest: dict, all_files: dict[str,
 
         if reasoning:
             _add_reasoning(build_id, "integration_review", reasoning)
-            _add_step(build_id, f"[thinking] GLM reviewed cross-file integration ({len(reasoning)} chars)")
+            _add_step(build_id, f"[thinking] Reviewed cross-file integration ({len(reasoning)} chars)")
 
-        # Parse the review result
         if review_text.startswith("```"):
             review_text = review_text.split("\n", 1)[1].rsplit("```", 1)[0]
         review = json.loads(review_text)
@@ -523,11 +1042,19 @@ async def integration_review(build_id: str, manifest: dict, all_files: dict[str,
                 if file_path and fixed_content and file_path in all_files:
                     all_files[file_path] = fixed_content
                     _add_step(build_id, f"Fixed: {issue_desc} in {file_path}")
-            # Update DB with fixed files
+                    _publish_event(build_id, "file_generated", {
+                        "file_path": file_path,
+                        "file_count": len(all_files),
+                        "total_files": len(all_files),
+                        "chars": len(fixed_content),
+                    })
             _update_build(build_id, generated_files=json.dumps(all_files))
         else:
             _add_step(build_id, "Integration review passed — no issues found")
 
+    except asyncio.TimeoutError:
+        logger.warning("Integration review timed out (non-fatal)")
+        _add_step(build_id, "Integration review timed out — skipping (app still works)")
     except Exception as e:
         logger.warning("Integration review failed (non-fatal): %s", e)
         _add_step(build_id, f"Integration review skipped: {str(e)[:100]}")
@@ -951,45 +1478,71 @@ async def run_retry_pipeline(build_id: str, failed_at: str = "unknown"):
 
 
 async def _retry_simple(build_id: str, prompt: str, failed_at: str):
-    """Retry a simple (single-file) build from point of failure."""
+    """Retry a simple (single-file) build from point of failure.
+
+    Key principle: SKIP steps that already succeeded. Use fast model on retry.
+    """
     with Session(engine) as session:
         build = session.get(Build, build_id)
         existing_code = build.generated_code if build else None
 
-    if failed_at in ("pending", "planning"):
-        # Need to redo everything from planning
-        plan = await plan_app(build_id, prompt)
-        code = await generate_code(build_id, prompt, plan)
-        code = await review_code(build_id, code)
-    elif failed_at == "coding":
-        # Planning done, redo coding
-        plan = ""  # plan was already used, re-plan briefly
-        plan = await plan_app(build_id, prompt)
-        code = await generate_code(build_id, prompt, plan)
-        code = await review_code(build_id, code)
-    elif failed_at == "reviewing":
-        # Code exists, just redo review
-        if existing_code:
-            _add_step(build_id, "Resuming from review stage (code already generated)")
-            code = await review_code(build_id, existing_code)
-        else:
-            plan = await plan_app(build_id, prompt)
-            code = await generate_code(build_id, prompt, plan)
-            code = await review_code(build_id, code)
-    elif failed_at == "deploying":
-        # Code exists and was reviewed, just deploy
-        if existing_code:
-            _add_step(build_id, "Resuming from deploy stage (code ready)")
-            code = existing_code
-        else:
-            plan = await plan_app(build_id, prompt)
-            code = await generate_code(build_id, prompt, plan)
-            code = await review_code(build_id, code)
+    if failed_at == "deploying" and existing_code:
+        # Code ready, just deploy
+        _add_step(build_id, "Resuming from deploy (code ready)")
+        code = existing_code
+    elif failed_at == "reviewing" and existing_code:
+        # Code exists, just review
+        _add_step(build_id, "Resuming from review (code already generated)")
+        code = await review_code(build_id, existing_code)
+    elif failed_at in ("coding", "planning", "pending") or not existing_code:
+        # Need to generate code — use fast model directly (GLM-5.1 already failed)
+        _add_step(build_id, "Retrying code generation with fast model (skipping redundant steps)...")
+        _update_build(build_id, status="coding")
+
+        code_text = await chat(
+            messages=[
+                {"role": "system", "content": CODE_SYSTEM},
+                {"role": "user", "content": (
+                    f"Build this app: {prompt}\n\n"
+                    f"Generate the COMPLETE single-file HTML app using Tailwind CSS CDN. "
+                    f"Include dark mode toggle, animations, empty states, toast notifications. "
+                    f"Wrap your code in ```html fences."
+                )},
+            ],
+            temperature=0.7,
+            max_tokens=8192,
+            retries=3,
+            thinking=False,
+            model=settings.GLM_FAST_MODEL,
+        )
+        code = _strip_fences(code_text)
+
+        if not code:
+            # Last resort: try fallback model
+            _add_step(build_id, "Fast model empty — trying fallback model...")
+            code_text = await chat(
+                messages=[
+                    {"role": "system", "content": CODE_SYSTEM},
+                    {"role": "user", "content": f"Build a complete single-file HTML app for: {prompt}\n\nWrap in ```html fences."},
+                ],
+                temperature=0.7,
+                max_tokens=8192,
+                retries=2,
+                thinking=False,
+                model=settings.GLM_FALLBACK_MODEL,
+            )
+            code = _strip_fences(code_text)
+
+        if not code:
+            raise ValueError("All models returned empty code — cannot proceed")
+
+        _update_build(build_id, generated_code=code)
+        _add_step(build_id, f"Code generated ({len(code)} chars)")
     else:
-        # Unknown stage, restart from scratch
-        plan = await plan_app(build_id, prompt)
-        code = await generate_code(build_id, prompt, plan)
-        code = await review_code(build_id, code)
+        # Unknown — use existing code or fail
+        code = existing_code or ""
+        if not code:
+            raise ValueError("No code available and unknown retry state")
 
     # Deploy
     _update_build(build_id, status="deploying")
@@ -1000,6 +1553,12 @@ async def _retry_simple(build_id: str, prompt: str, failed_at: str):
         status="deployed",
         deploy_url=deploy_url,
         deployed_at=datetime.now(timezone.utc),
+        tech_stack=json.dumps({
+            "frontend": "HTML + Tailwind CSS + JavaScript",
+            "backend": "None (client-only)",
+            "database": "localStorage",
+            "deployment": "Static HTML",
+        }),
     )
     _add_step(build_id, f"Deployed at {deploy_url}")
 
@@ -1107,24 +1666,54 @@ async def run_pipeline(build_id: str):
         if complexity in ("standard", "fullstack"):
             # ── Multi-file pipeline ──
             logger.info("Build %s using %s pipeline", build_id, complexity)
-            deploy_url = await run_fullstack_pipeline(build_id, prompt, classification)
+
+            # PM Agent: Write PRD
+            prd = await write_prd(build_id, prompt)
+
+            # Design Agent: Create design system
+            design = await create_design_system(build_id, prompt, prd)
+
+            # Enrich prompt with PRD + design context for downstream agents
+            enriched_prompt = (
+                f"{prompt}\n\n"
+                f"PRD: {json.dumps(prd, indent=2)[:3000]}\n\n"
+                f"Design System: {json.dumps(design, indent=2)[:2000]}"
+            )
+
+            deploy_url = await run_fullstack_pipeline(build_id, enriched_prompt, classification)
 
             # Generate thumbnail (non-blocking)
-            app_desc = prompt
-            asyncio.create_task(_safe_thumbnail(build_id, app_desc))
+            asyncio.create_task(_safe_thumbnail(build_id, prompt))
             logger.info("Build %s completed (fullstack): %s", build_id, deploy_url)
         else:
-            # ── Simple single-file pipeline (existing behavior) ──
-            logger.info("Build %s using simple pipeline", build_id)
+            # ── Simple single-file pipeline with multi-agent quality ──
+            logger.info("Build %s using enhanced simple pipeline", build_id)
 
-            # Plan (with web search + thinking)
-            plan = await plan_app(build_id, prompt)
+            # PM Agent: Write PRD with acceptance criteria
+            prd = await write_prd(build_id, prompt)
 
-            # Generate code (with thinking)
-            code = await generate_code(build_id, prompt, plan)
+            # Design Agent: Create visual design system
+            design = await create_design_system(build_id, prompt, prd)
 
-            # Review (with thinking)
-            code = await review_code(build_id, code)
+            # Plan (with web search + thinking + PRD + design context)
+            plan_prompt = (
+                f"{prompt}\n\n"
+                f"PRD: {json.dumps(prd, indent=2)[:3000]}\n\n"
+                f"Design System: {json.dumps(design, indent=2)[:2000]}"
+            )
+            plan = await plan_app(build_id, plan_prompt)
+
+            # Generate code (with thinking + web search + component library)
+            code = await generate_code(build_id, plan_prompt, plan)
+
+            # QA Agent: Validate against PRD acceptance criteria
+            code = await qa_validate(build_id, code, prd)
+
+            # Polish Agent: Animations, empty states, dark mode, micro-interactions
+            code = await polish_pass(build_id, code)
+
+            # Visual Feedback Loop: Browser screenshot → GLM-5V fix
+            code = await visual_validate(build_id, code)
 
             # Deploy
             _update_build(build_id, status="deploying")
@@ -1136,12 +1725,17 @@ async def run_pipeline(build_id: str):
                 status="deployed",
                 deploy_url=deploy_url,
                 deployed_at=datetime.now(timezone.utc),
+                tech_stack=json.dumps({
+                    "frontend": "HTML + Tailwind CSS + JavaScript",
+                    "backend": "None (client-only)",
+                    "database": "localStorage",
+                    "deployment": "Static HTML",
+                }),
             )
             _add_step(build_id, f"Deployed at {deploy_url}")
 
             # Generate thumbnail (non-blocking)
-            app_desc = prompt
-            asyncio.create_task(_safe_thumbnail(build_id, app_desc))
+            asyncio.create_task(_safe_thumbnail(build_id, prompt))
             logger.info("Build %s completed (simple): %s", build_id, deploy_url)
 
     except Exception as e:

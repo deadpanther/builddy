@@ -24,7 +24,6 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // Screenshot state — supports multiple images
   const [images, setImages] = useState<{ base64: string; preview: string }[]>([]);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -89,7 +88,6 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
 
     try {
       const b64List = images.map((img) => img.base64);
-      // Send single string or array depending on count
       const imagePayload = b64List.length === 1 ? b64List[0] : b64List;
       const build = await createBuildFromImage(imagePayload, prompt);
       setImages([]);
@@ -104,22 +102,24 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
   };
 
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
-      <div className="mb-4 flex items-center gap-2">
-        <Sparkles className="h-4 w-4 text-violet-400" />
-        <h2 className="font-semibold text-neutral-200 text-sm">Build an App</h2>
+    <div className="glass-panel p-5">
+      <div className="mb-4 flex items-center gap-2.5">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500/15">
+          <Sparkles className="h-4 w-4 text-brand-400" />
+        </div>
+        <h2 className="text-sm font-semibold text-white">Build an App</h2>
       </div>
 
       {/* Mode tabs */}
-      <div className="mb-4 flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
+      <div className="mb-4 flex gap-1 rounded-lg bg-surface-100 p-1">
         <button
           type="button"
           onClick={() => setMode("text")}
           className={cn(
-            "flex flex-1 items-center justify-center gap-1.5 rounded px-3 py-1.5 font-mono text-xs transition-colors",
+            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-all",
             mode === "text"
-              ? "bg-violet-900/60 text-violet-200"
-              : "text-neutral-500 hover:text-neutral-300"
+              ? "bg-brand-500/20 text-brand-300 shadow-inner-glow"
+              : "text-zinc-500 hover:text-zinc-300"
           )}
         >
           <Type className="h-3 w-3" />
@@ -129,10 +129,10 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
           type="button"
           onClick={() => setMode("screenshot")}
           className={cn(
-            "flex flex-1 items-center justify-center gap-1.5 rounded px-3 py-1.5 font-mono text-xs transition-colors",
+            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-all",
             mode === "screenshot"
-              ? "bg-violet-900/60 text-violet-200"
-              : "text-neutral-500 hover:text-neutral-300"
+              ? "bg-brand-500/20 text-brand-300 shadow-inner-glow"
+              : "text-zinc-500 hover:text-zinc-300"
           )}
         >
           <Image className="h-3 w-3" />
@@ -141,10 +141,10 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
       </div>
 
       {mode === "text" ? (
-        /* ── Text mode ──────────────────────────────────────────── */
+        /* ── Text mode ────────────────────────────── */
         <form onSubmit={handleSubmitText} className="space-y-3">
           <div>
-            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-wider text-neutral-600">
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-wider text-zinc-500">
               Describe your app
             </label>
             <textarea
@@ -154,15 +154,15 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
               rows={4}
               disabled={loading}
               className={cn(
-                "w-full resize-none rounded border border-neutral-800 bg-neutral-950 px-3 py-2 font-mono text-sm text-neutral-200 placeholder:text-neutral-700 outline-none transition-colors",
-                "focus:border-violet-700/60 focus:ring-1 focus:ring-violet-700/30",
+                "w-full resize-none rounded-lg border bg-surface px-3.5 py-2.5 font-mono text-sm text-white placeholder:text-zinc-600 outline-none transition-all",
+                "border-stroke focus:border-brand-500/50 focus:ring-2 focus:ring-brand-500/20",
                 loading && "opacity-50 cursor-not-allowed"
               )}
             />
           </div>
 
           <div>
-            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-neutral-700">
+            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-600">
               Quick examples
             </p>
             <div className="flex flex-wrap gap-1.5">
@@ -171,7 +171,7 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
                   key={ex}
                   type="button"
                   onClick={() => setPrompt(`Build me ${ex}`)}
-                  className="rounded border border-neutral-800 bg-neutral-900 px-2 py-0.5 font-mono text-[10px] text-neutral-500 transition-colors hover:border-neutral-700 hover:text-neutral-300"
+                  className="rounded-md border border-stroke bg-surface-100 px-2.5 py-1 font-mono text-[10px] text-zinc-500 transition-all hover:border-stroke-hover hover:text-white hover:bg-surface-200"
                 >
                   {ex}
                 </button>
@@ -183,14 +183,14 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
             type="submit"
             disabled={loading || !prompt.trim()}
             className={cn(
-              "flex w-full items-center justify-center gap-2 rounded border px-4 py-2.5 font-semibold text-sm transition-all",
-              "border-violet-700 bg-violet-900/60 text-violet-200 hover:bg-violet-800/60",
+              "flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-2.5 font-semibold text-sm transition-all",
+              "bg-brand-500/20 border-brand-500/30 text-brand-300 hover:bg-brand-500/30",
               "disabled:opacity-30 disabled:cursor-not-allowed"
             )}
           >
             {loading ? (
               <>
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-violet-300 border-t-transparent" />
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-300 border-t-transparent" />
                 Building with GLM 5.1...
               </>
             ) : (
@@ -202,9 +202,8 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
           </button>
         </form>
       ) : (
-        /* ── Screenshot mode ────────────────────────────────────── */
+        /* ── Screenshot mode ──────────────────────── */
         <form onSubmit={handleSubmitScreenshot} className="space-y-3">
-          {/* Image upload / preview area */}
           <div
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
@@ -214,18 +213,18 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
               <div
                 onClick={() => fileInputRef.current?.click()}
                 className={cn(
-                  "flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-8 transition-colors",
+                  "flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-8 transition-all",
                   dragging
-                    ? "border-violet-500 bg-violet-950/30"
-                    : "border-neutral-700 bg-neutral-950 hover:border-neutral-600"
+                    ? "border-brand-400 bg-brand-500/10"
+                    : "border-stroke bg-surface hover:border-stroke-hover"
                 )}
               >
-                <Upload className="mb-2 h-8 w-8 text-neutral-600" />
-                <p className="text-sm text-neutral-400">
+                <Upload className="mb-2 h-8 w-8 text-zinc-600" />
+                <p className="text-sm text-zinc-400">
                   Drop screenshot(s) or mockup(s) here
                 </p>
-                <p className="mt-1 font-mono text-[10px] text-neutral-600">
-                  PNG, JPG up to 5MB each — upload multiple for multi-screen apps
+                <p className="mt-1 font-mono text-[10px] text-zinc-600">
+                  PNG, JPG up to 5MB each
                 </p>
               </div>
             ) : (
@@ -236,27 +235,26 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
                       <img
                         src={img.preview}
                         alt={`Screenshot ${i + 1}`}
-                        className="h-24 w-auto rounded border border-neutral-700 object-contain"
+                        className="h-24 w-auto rounded-lg border border-stroke object-contain"
                       />
                       <button
                         type="button"
                         onClick={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
-                        className="absolute -right-1 -top-1 rounded-full bg-red-900 p-0.5 text-red-300 opacity-0 transition-opacity group-hover:opacity-100"
+                        className="absolute -right-1 -top-1 rounded-full bg-danger/80 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
                       >
                         <X className="h-3 w-3" />
                       </button>
                     </div>
                   ))}
-                  {/* Add more button */}
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex h-24 w-20 items-center justify-center rounded border-2 border-dashed border-neutral-700 text-neutral-600 transition-colors hover:border-neutral-500 hover:text-neutral-400"
+                    className="flex h-24 w-20 items-center justify-center rounded-lg border-2 border-dashed border-stroke text-zinc-600 transition-all hover:border-stroke-hover hover:text-zinc-400"
                   >
                     <span className="text-2xl">+</span>
                   </button>
                 </div>
-                <p className="font-mono text-[10px] text-neutral-600">
+                <p className="font-mono text-[10px] text-zinc-600">
                   {images.length} screenshot{images.length !== 1 ? "s" : ""} — each becomes a screen in your app
                 </p>
               </div>
@@ -275,7 +273,7 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
           />
 
           <div>
-            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-wider text-neutral-600">
+            <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-wider text-zinc-500">
               Additional instructions (optional)
             </label>
             <input
@@ -285,8 +283,8 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
               placeholder="Make all buttons functional, add dark mode..."
               disabled={loading}
               className={cn(
-                "w-full rounded border border-neutral-800 bg-neutral-950 px-3 py-2 font-mono text-sm text-neutral-200 placeholder:text-neutral-700 outline-none transition-colors",
-                "focus:border-violet-700/60 focus:ring-1 focus:ring-violet-700/30",
+                "w-full rounded-lg border bg-surface px-3.5 py-2.5 font-mono text-sm text-white placeholder:text-zinc-600 outline-none transition-all",
+                "border-stroke focus:border-brand-500/50 focus:ring-2 focus:ring-brand-500/20",
                 loading && "opacity-50 cursor-not-allowed"
               )}
             />
@@ -296,14 +294,14 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
             type="submit"
             disabled={loading || images.length === 0}
             className={cn(
-              "flex w-full items-center justify-center gap-2 rounded border px-4 py-2.5 font-semibold text-sm transition-all",
-              "border-violet-700 bg-violet-900/60 text-violet-200 hover:bg-violet-800/60",
+              "flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-2.5 font-semibold text-sm transition-all",
+              "bg-brand-500/20 border-brand-500/30 text-brand-300 hover:bg-brand-500/30",
               "disabled:opacity-30 disabled:cursor-not-allowed"
             )}
           >
             {loading ? (
               <>
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-violet-300 border-t-transparent" />
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-300 border-t-transparent" />
                 GLM-5V Analyzing Screenshot...
               </>
             ) : (
@@ -317,15 +315,15 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
       )}
 
       {success && (
-        <div className="mt-3 flex items-center gap-2 rounded border border-emerald-900 bg-emerald-950/50 px-3 py-2">
-          <CheckCircle className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-          <p className="font-mono text-xs text-emerald-400">
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-success-border bg-success-dim px-3 py-2">
+          <CheckCircle className="h-3.5 w-3.5 text-success shrink-0" />
+          <p className="font-mono text-xs text-success">
             Build started! Check the feed for progress.
           </p>
         </div>
       )}
       {error && (
-        <p className="mt-3 rounded border border-red-900 bg-red-950/50 px-3 py-2 font-mono text-xs text-red-400">
+        <p className="mt-3 rounded-lg border border-danger-border bg-danger-dim px-3 py-2 font-mono text-xs text-danger">
           {error}
         </p>
       )}

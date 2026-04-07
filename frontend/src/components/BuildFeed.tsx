@@ -42,11 +42,11 @@ export function BuildFeed({ refreshTrigger }: BuildFeedProps) {
   return (
     <div>
       {/* Feed header */}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-5 flex items-center justify-between">
         <div>
-          <h2 className="font-semibold text-neutral-200">Live Build Feed</h2>
+          <h2 className="text-lg font-semibold text-white">Live Build Feed</h2>
           {lastRefresh && (
-            <p className="mt-0.5 font-mono text-[10px] text-neutral-700">
+            <p className="mt-0.5 font-mono text-[10px] text-zinc-600">
               Updated {lastRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               {" · "}auto-refresh every 5s
             </p>
@@ -54,26 +54,26 @@ export function BuildFeed({ refreshTrigger }: BuildFeedProps) {
         </div>
         <button
           onClick={fetchBuilds}
-          className="flex items-center gap-1.5 rounded border border-neutral-800 bg-neutral-900 px-2.5 py-1.5 font-mono text-[10px] text-neutral-500 transition-colors hover:border-neutral-700 hover:text-neutral-300"
+          className="flex items-center gap-1.5 rounded-lg border border-stroke bg-surface-100 px-3 py-1.5 font-mono text-xs text-zinc-500 transition-all hover:border-stroke-hover hover:text-white hover:bg-surface-200"
         >
-          <RefreshCw className="h-3 w-3" />
+          <RefreshCw className="h-3.5 w-3.5" />
           Refresh
         </button>
       </div>
 
       {/* Feed list */}
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-neutral-700">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-700 border-t-neutral-400" />
+        <div className="flex items-center justify-center py-20 text-zinc-600">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-700 border-t-brand-400" />
           <span className="ml-3 font-mono text-xs">Loading builds...</span>
         </div>
       ) : builds.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-neutral-800 py-16 text-center">
-          <p className="font-mono text-sm text-neutral-600">No builds yet.</p>
-          <p className="mt-1 text-xs text-neutral-700">Submit one below or tweet @builddy</p>
+        <div className="glass-panel py-20 text-center">
+          <p className="text-sm text-zinc-500">No builds yet.</p>
+          <p className="mt-1 text-xs text-zinc-600">Submit one on the right or tweet @builddy</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4 stagger-children">
           {builds.map((build) => (
             <BuildCard key={build.id} build={build} />
           ))}
