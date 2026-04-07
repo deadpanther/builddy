@@ -165,9 +165,10 @@ FINAL_REPORT_TOOL = {
 
 
 class ForensicAnalyst:
-    def __init__(self, autopsy_id: str, repo_url: str):
+    def __init__(self, autopsy_id: str, repo_url: str, github_token: str | None = None):
         self.autopsy_id = autopsy_id
         self.repo_url = repo_url
+        self.github_token = github_token
         self.repo_path = ""
         self.client = AsyncOpenAI(
             api_key=settings.GLM_API_KEY,
@@ -190,8 +191,17 @@ class ForensicAnalyst:
         if progress_callback:
             await progress_callback("cloning", f"Cloning {self.repo_url}...")
 
+        # If a GitHub token is provided (via Auth0 Token Vault), inject it into the clone URL
+        # This enables cloning private repos the user has access to
+        clone_url = self.repo_url
+        if self.github_token and "github.com" in clone_url:
+            clone_url = clone_url.replace(
+                "https://github.com/",
+                f"https://x-access-token:{self.github_token}@github.com/"
+            )
+
         result = subprocess.run(
-            ["git", "clone", "--depth=500", self.repo_url, self.repo_path],
+            ["git", "clone", "--depth=500", clone_url, self.repo_path],
             capture_output=True, text=True, timeout=120,
         )
 

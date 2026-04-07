@@ -39,6 +39,7 @@ app.add_middleware(
 
 class AutopsyRequest(BaseModel):
     repo_url: str
+    github_token: Optional[str] = None
 
 
 class AutopsyResponse(BaseModel):
@@ -70,7 +71,7 @@ async def create_autopsy(req: AutopsyRequest):
         await session.commit()
 
     # Start analysis in background
-    asyncio.create_task(run_autopsy(autopsy_id, req.repo_url))
+    asyncio.create_task(run_autopsy(autopsy_id, req.repo_url, req.github_token))
 
     return AutopsyResponse(
         autopsy_id=autopsy_id,
@@ -79,9 +80,9 @@ async def create_autopsy(req: AutopsyRequest):
     )
 
 
-async def run_autopsy(autopsy_id: str, repo_url: str):
+async def run_autopsy(autopsy_id: str, repo_url: str, github_token: Optional[str] = None):
     """Background task to run the full forensic analysis"""
-    analyst = ForensicAnalyst(autopsy_id, repo_url)
+    analyst = ForensicAnalyst(autopsy_id, repo_url, github_token=github_token)
 
     async def progress(phase: str, message: str):
         # Save evidence to DB
