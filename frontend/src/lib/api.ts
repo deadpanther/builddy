@@ -102,6 +102,11 @@ export function streamBuild(buildId: string, onEvent: (event: { type: string; da
   return () => source.close();
 }
 
+export async function deleteBuild(buildId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/builds/${buildId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Failed to delete build: ${res.statusText}`);
+}
+
 export async function getBuildChain(buildId: string): Promise<VersionEntry[]> {
   const res = await fetch(`${API_BASE}/api/builds/${buildId}/chain`);
   if (!res.ok) return [];

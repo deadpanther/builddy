@@ -1,14 +1,15 @@
 import Link from "next/link";
-import { ExternalLink, Clock, User, Image, Download, Layers } from "lucide-react";
+import { ExternalLink, Clock, User, Image, Download, Layers, Trash2 } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
-import { resolveDeployUrl, getDownloadUrl } from "@/lib/api";
+import { resolveDeployUrl, getDownloadUrl, deleteBuild, API_BASE } from "@/lib/api";
 import type { Build } from "@/lib/types";
 
 interface BuildCardProps {
   build: Build;
+  onDeleted?: () => void;
 }
 
-export function BuildCard({ build }: BuildCardProps) {
+export function BuildCard({ build, onDeleted }: BuildCardProps) {
   const isActive = ["pending", "planning", "coding", "reviewing", "deploying"].includes(build.status);
 
   return (
@@ -50,8 +51,8 @@ export function BuildCard({ build }: BuildCardProps) {
 
       {/* Thumbnail */}
       {build.thumbnail_url && (
-        <div className="mb-3 overflow-hidden rounded-lg border border-stroke">
-          <img src={build.thumbnail_url} alt="" className="h-16 w-full object-cover" />
+        <div className="mb-3 overflow-hidden rounded-xl border border-stroke aspect-video">
+          <img src={build.thumbnail_url.startsWith("http") ? build.thumbnail_url : `${API_BASE}${build.thumbnail_url}`} alt="" className="h-full w-full object-cover object-top" />
         </div>
       )}
 
@@ -101,6 +102,21 @@ export function BuildCard({ build }: BuildCardProps) {
               Zip
             </a>
           )}
+          <button
+            onClick={async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!confirm("Delete this build?")) return;
+              try {
+                await deleteBuild(build.id);
+                onDeleted?.();
+              } catch {}
+            }}
+            className="flex items-center justify-center rounded-lg p-1.5 text-zinc-600 transition-colors hover:bg-danger-dim hover:text-danger"
+            title="Delete build"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
         </div>
       </div>
     </Link>

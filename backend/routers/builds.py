@@ -574,6 +574,34 @@ async def retry_build(build_id: str, session: Session = Depends(get_session)):
     return build
 
 
+@router.delete("/{build_id}")
+async def delete_build(build_id: str, session: Session = Depends(get_session)):
+    """Delete a build and its deployed files."""
+    build = session.get(Build, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Build not found")
+
+    # Delete deployed files from disk
+    import shutil
+    from services.deployer import DEPLOYED_DIR
+    app_dir = DEPLOYED_DIR / build_id
+    if app_dir.exists():
+        shutil.rmtree(app_dir, ignore_errors=True)
+
+    # Stop Express process if running
+    try:
+        from services.process_manager import process_manager
+        await process_manager.stop_app(build_id)
+    except Exception:
+        pass
+
+    # Delete from DB
+    session.delete(build)
+    session.commit()
+
+    return {"status": "deleted", "build_id": build_id}
+
+
 async def _run_build_pipeline(build_id: str):
     """Run the agent pipeline in background."""
     try:

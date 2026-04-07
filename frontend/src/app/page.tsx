@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Zap, Sparkles, Code2, Rocket } from "lucide-react";
+import { Sparkles, Code2, Rocket } from "lucide-react";
 import { BuildFeed } from "@/components/BuildFeed";
 import { SubmitBuild } from "@/components/SubmitBuild";
 
@@ -10,23 +10,46 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-[calc(100vh-56px)]">
-      {/* Hero — warm bento header */}
+      {/* Hero — bold tagline, not a logo repeat */}
       <header className="relative border-b overflow-hidden" style={{ borderColor: 'var(--card-border)' }}>
-        <div className="absolute inset-0 bg-grid opacity-40" />
-        <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at top, var(--accent-soft) 0%, transparent 60%)' }} />
+        <div className="absolute inset-0 bg-grid opacity-30" />
+        <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at top, var(--accent-soft) 0%, transparent 50%)' }} />
 
-        <div className="relative mx-auto max-w-7xl px-6 py-10">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-bento bg-brand-500/10 dark:bg-brand-500/15 border border-brand-500/20">
-              <Zap className="h-6 w-6 text-brand-500 dark:text-brand-400" />
-            </div>
-            <div>
-              <h1 className="font-display text-3xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                Builddy
-              </h1>
-              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                AI-powered app builder &middot; Powered by GLM 5.1
+        <div className="relative mx-auto max-w-7xl px-6 pt-12 pb-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-8">
+          <div>
+            <h1 className="font-display text-4xl sm:text-5xl font-bold tracking-tight leading-[1.1]" style={{ color: 'var(--text-primary)' }}>
+              See an app you love?<br />
+              <span className="text-gradient">We&apos;ll build it for you.</span>
+            </h1>
+            <p className="mt-3 text-base max-w-lg leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              Found a cool app on X? Reply with <span className="font-mono font-medium" style={{ color: 'var(--accent)' }}>@builddy Build me</span> and our 6 AI agents will clone it from the screenshot, deploy it live, and reply with the link.
+            </p>
+          </div>
+
+          {/* Tweet to build — hero CTA */}
+          <div className="shrink-0 w-full lg:w-auto lg:max-w-sm">
+            <div className="bento-card p-5 relative overflow-hidden">
+              <div className="absolute -top-6 -right-6 w-24 h-24 rounded-full opacity-[0.08]" style={{ background: 'var(--accent)', filter: 'blur(28px)' }} />
+              <div className="flex items-center gap-2 mb-2.5">
+                <svg className="h-4 w-4" style={{ color: 'var(--text-primary)' }} viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Tweet to build</span>
+              </div>
+              <div className="rounded-lg px-3 py-2.5 font-mono text-[13px] leading-relaxed" style={{ background: 'var(--surface-sunken)', color: 'var(--text-secondary)' }}>
+                <span style={{ color: 'var(--accent)' }}>@builddy</span>{" "}Build me a pomodoro timer with sound effects and dark mode
+              </div>
+              <p className="mt-2.5 text-[11px] leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+                Mention <span className="font-mono font-medium" style={{ color: 'var(--accent)' }}>@builddy</span> on X — we build it and reply with the live link.
               </p>
+              <a
+                href="https://x.com/intent/tweet?text=%40builddy%20Build%20me%20"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 flex items-center justify-center gap-2 w-full rounded-xl py-2 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
+                style={{ background: 'var(--accent)' }}
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                Tweet @builddy
+              </a>
             </div>
           </div>
         </div>
@@ -48,8 +71,8 @@ export default function DashboardPage() {
               <ol className="space-y-4">
                 {[
                   { icon: Sparkles, text: "Describe your app or upload a screenshot", color: "text-brand-500 dark:text-brand-400" },
-                  { icon: Code2, text: "GLM 5.1 plans, codes, and self-reviews", color: "text-amber-600 dark:text-amber-400" },
-                  { icon: Rocket, text: "Deployed instantly — iterate with natural language", color: "text-emerald-600 dark:text-emerald-400" },
+                  { icon: Code2, text: "6 AI agents plan, code, and review", color: "text-amber-600 dark:text-amber-400" },
+                  { icon: Rocket, text: "Deployed live — iterate with plain English", color: "text-emerald-600 dark:text-emerald-400" },
                 ].map(({ icon: Icon, text, color }, i) => (
                   <li key={i} className="flex items-start gap-3">
                     <span
@@ -70,9 +93,9 @@ export default function DashboardPage() {
             {/* Stats — bento grid */}
             <div className="grid grid-cols-3 gap-3">
               {[
-                { label: "Builds", value: "—" },
-                { label: "Deployed", value: "—" },
-                { label: "Avg time", value: "—" },
+                { label: "Agents", value: "6" },
+                { label: "Models", value: "3" },
+                { label: "Steps", value: "9" },
               ].map(({ label, value }) => (
                 <div key={label} className="bento-card p-4 text-center">
                   <div className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{value}</div>

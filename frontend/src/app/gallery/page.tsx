@@ -13,7 +13,7 @@ import {
   Send,
   X,
 } from "lucide-react";
-import { getGallery, resolveDeployUrl, remixBuild } from "@/lib/api";
+import { getGallery, resolveDeployUrl, remixBuild, API_BASE } from "@/lib/api";
 import type { GalleryApp } from "@/lib/types";
 
 type SortOption = "recent" | "trending";
@@ -171,9 +171,15 @@ function GalleryCard({ app }: { app: GalleryApp }) {
 
   return (
     <div className="group rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 transition-all hover:border-neutral-600 hover:bg-neutral-900">
-      {/* Thumbnail placeholder */}
-      <div className="mb-3 flex h-32 items-center justify-center rounded border border-neutral-800 bg-neutral-950 overflow-hidden">
-        {url ? (
+      {/* Thumbnail */}
+      <div className="mb-3 overflow-hidden rounded-xl border border-neutral-800 bg-neutral-950 aspect-video">
+        {app.thumbnail_url ? (
+          <img
+            src={app.thumbnail_url.startsWith("http") ? app.thumbnail_url : `${API_BASE}${app.thumbnail_url}`}
+            alt={app.app_name}
+            className="h-full w-full object-cover object-top"
+          />
+        ) : url ? (
           <iframe
             src={url}
             className="pointer-events-none h-full w-full origin-center"
@@ -188,9 +194,9 @@ function GalleryCard({ app }: { app: GalleryApp }) {
             }}
           />
         ) : (
-          <span className="font-mono text-xs text-neutral-700">
-            No preview
-          </span>
+          <div className="flex h-full items-center justify-center">
+            <span className="font-mono text-xs text-neutral-700">No preview</span>
+          </div>
         )}
       </div>
 

@@ -342,20 +342,48 @@ async def review_code(build_id: str, code: str) -> str:
 
 
 async def generate_thumbnail(build_id: str, app_description: str):
-    """Generate an app thumbnail using CogView-4."""
-    if not settings.ENABLE_IMAGE_GEN:
-        return
+    """Screenshot the deployed app as a thumbnail using Playwright.
 
-    _add_step(build_id, "Generating app thumbnail with CogView-4...")
+    Falls back to CogView-4 if Playwright fails or the app isn't accessible.
+    """
+    _add_step(build_id, "Capturing app screenshot for thumbnail...")
 
-    prompt = IMAGE_PROMPT_TEMPLATE.format(description=app_description[:200])
-    url = await generate_image(prompt, size="1024x1024")
+    # Try to screenshot the live app first
+    try:
+        from services.visual_validator import validate_html
+        from services.deployer import get_deployed_html, DEPLOYED_DIR
+        import base64
 
-    if url:
-        _update_build(build_id, thumbnail_url=url)
-        _add_step(build_id, f"[image] Thumbnail generated with CogView-4")
-    else:
-        _add_step(build_id, "Thumbnail generation skipped")
+        # Read the deployed index.html
+        index_path = DEPLOYED_DIR / build_id / "index.html"
+        if index_path.exists():
+            html = index_path.read_text(encoding="utf-8")
+            result = await asyncio.wait_for(validate_html(html, viewport_width=1280, viewport_height=800), timeout=30)
+
+            if result["screenshot_base64"]:
+                # Save screenshot as a file in the deployed directory
+                screenshot_bytes = base64.b64decode(result["screenshot_base64"])
+                screenshot_path = DEPLOYED_DIR / build_id / "thumbnail.png"
+                screenshot_path.write_bytes(screenshot_bytes)
+                thumbnail_url = f"/apps/{build_id}/thumbnail.png"
+                _update_build(build_id, thumbnail_url=thumbnail_url)
+                _add_step(build_id, "[screenshot] App thumbnail captured")
+                return
+
+    except Exception as e:
+        logger.warning("Screenshot thumbnail failed for %s: %s", build_id, e)
+
+    # Fallback: CogView-4
+    if settings.ENABLE_IMAGE_GEN:
+        _add_step(build_id, "Screenshot failed — generating icon with CogView-4...")
+        prompt = IMAGE_PROMPT_TEMPLATE.format(description=app_description[:200])
+        url = await generate_image(prompt, size="1024x1024")
+        if url:
+            _update_build(build_id, thumbnail_url=url)
+            _add_step(build_id, "[image] Thumbnail generated with CogView-4")
+            return
+
+    _add_step(build_id, "Thumbnail generation skipped")
 
 
 # ── Multi-Agent Pipeline Steps (PRD → Design → QA → Polish → Visual) ────────

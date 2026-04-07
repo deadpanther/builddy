@@ -102,7 +102,7 @@ async def _process_mentions():
 
 
 async def _build_and_reply(build_id: str, tweet_id: str, username: str):
-    """Run pipeline then reply to the tweet with the live app link."""
+    """Run text pipeline then reply to the tweet with the live app link."""
     from routers.builds import _run_build_pipeline
 
     try:
@@ -110,7 +110,41 @@ async def _build_and_reply(build_id: str, tweet_id: str, username: str):
     except Exception as e:
         logger.error("Pipeline failed for tweet-build %s: %s", build_id, e)
 
-    # Check build result and reply
+    await _send_reply(build_id, tweet_id, username)
+
+
+async def _build_screenshot_and_reply(
+    build_id: str, tweet_id: str, username: str,
+    screenshot_b64: str, prompt: str,
+):
+    """Run screenshot-to-app pipeline then reply with the live link.
+
+    The prompt is enriched to capture the ESSENCE of the referenced app,
+    not just pixel-copy it — we add our own twist and improvements.
+    """
+    from agent.pipeline import run_screenshot_pipeline
+
+    enriched_prompt = (
+        f"{prompt}\n\n"
+        f"IMPORTANT: The screenshot above is INSPIRATION, not a clone target. "
+        f"Capture the core concept and purpose of this app, then BUILD YOUR OWN VERSION that is:\n"
+        f"- Visually distinct with a fresh, modern design (don't copy their exact colors/layout)\n"
+        f"- Feature-enhanced — add 2-3 features the original is missing\n"
+        f"- More polished — better animations, dark mode, keyboard shortcuts\n"
+        f"- Fully functional — not just a visual shell\n"
+        f"Think of it as: 'What if a top designer reimagined this app from scratch?'"
+    )
+
+    try:
+        await run_screenshot_pipeline(build_id, [screenshot_b64], enriched_prompt)
+    except Exception as e:
+        logger.error("Screenshot pipeline failed for tweet-build %s: %s", build_id, e)
+
+    await _send_reply(build_id, tweet_id, username)
+
+
+async def _send_reply(build_id: str, tweet_id: str, username: str):
+    """Check build result and reply to the tweet."""
     session = get_new_session()
     try:
         build = session.get(Build, build_id)
@@ -249,11 +283,17 @@ class ScrapedMention(BaseModel):
     tweet_id: str
     tweet_text: str
     twitter_username: str
+    parent_screenshot: str | None = None   # base64 PNG of the parent tweet's content
+    parent_text: str | None = None         # text from the parent tweet
 
 
 @router.post("/ingest")
 async def ingest_mention(data: ScrapedMention, session: Session = Depends(get_session)):
-    """Receive a scraped mention from the Playwright scraper and trigger a build."""
+    """Receive a scraped mention from the Playwright scraper and trigger a build.
+
+    If parent_screenshot is provided (reply to a design tweet), uses the
+    screenshot-to-app pipeline instead of the text pipeline.
+    """
     # Skip duplicates
     existing = session.exec(
         select(Mention).where(Mention.tweet_id == data.tweet_id)
@@ -263,10 +303,21 @@ async def ingest_mention(data: ScrapedMention, session: Session = Depends(get_se
 
     raw_text = data.tweet_text
     prompt = raw_text.replace("@builddy", "").replace("@Builddy", "").strip()
-    if not prompt:
-        return {"status": "skipped", "reason": "empty prompt"}
 
-    logger.info("Ingested mention from @%s: %s", data.twitter_username, prompt[:80])
+    # If it's a reply with parent context, enrich the prompt
+    has_screenshot = bool(data.parent_screenshot)
+    if data.parent_text:
+        prompt = f"{prompt}\n\nOriginal post: {data.parent_text}" if prompt else data.parent_text
+
+    if not prompt and not has_screenshot:
+        return {"status": "skipped", "reason": "empty prompt and no screenshot"}
+
+    build_type = "screenshot" if has_screenshot else "text"
+    logger.info(
+        "Ingested %s mention from @%s: %s%s",
+        build_type, data.twitter_username, prompt[:80],
+        " (with parent screenshot)" if has_screenshot else "",
+    )
 
     mention = Mention(
         tweet_id=data.tweet_id,
@@ -282,8 +333,9 @@ async def ingest_mention(data: ScrapedMention, session: Session = Depends(get_se
         tweet_id=data.tweet_id,
         tweet_text=raw_text,
         twitter_username=data.twitter_username,
-        prompt=prompt,
+        prompt=prompt or "Build this app based on the screenshot",
         status="pending",
+        build_type=build_type,
     )
     session.add(build)
     session.commit()
@@ -294,9 +346,18 @@ async def ingest_mention(data: ScrapedMention, session: Session = Depends(get_se
     session.add(mention)
     session.commit()
 
-    asyncio.create_task(_build_and_reply(build.id, data.tweet_id, data.twitter_username))
+    # Use screenshot pipeline if parent screenshot is present
+    if has_screenshot:
+        asyncio.create_task(
+            _build_screenshot_and_reply(
+                build.id, data.tweet_id, data.twitter_username,
+                data.parent_screenshot, prompt or "Build this app",
+            )
+        )
+    else:
+        asyncio.create_task(_build_and_reply(build.id, data.tweet_id, data.twitter_username))
 
-    return {"status": "created", "build_id": build.id, "tweet_id": data.tweet_id}
+    return {"status": "created", "build_id": build.id, "tweet_id": data.tweet_id, "type": build_type}
 
 
 @router.get("/mentions")

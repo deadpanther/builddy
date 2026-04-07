@@ -161,7 +161,60 @@ class TwitterMentionScraper:
             "tweet_id": tweet_id,
             "tweet_text": tweet_text,
             "twitter_username": twitter_username,
+            "parent_screenshot": None,  # filled by _enrich_reply
+            "parent_text": None,
         }
+
+    async def _enrich_reply(self, mention: dict) -> dict:
+        """If the mention is a reply to another tweet, screenshot the parent tweet's content."""
+        try:
+            # Navigate to the mention tweet to see the parent
+            tweet_url = f"https://x.com/i/status/{mention['tweet_id']}"
+            await self._page.goto(tweet_url, wait_until="domcontentloaded", timeout=15000)
+            await self._page.wait_for_timeout(3000)
+
+            # Find all tweet articles — the parent tweet is typically the FIRST one
+            articles = await self._page.query_selector_all('article[data-testid="tweet"]')
+            if len(articles) < 2:
+                return mention  # not a reply or can't find parent
+
+            parent_article = articles[0]
+
+            # Get parent tweet text
+            parent_text_el = await parent_article.query_selector('[data-testid="tweetText"]')
+            if parent_text_el:
+                mention["parent_text"] = await parent_text_el.inner_text()
+
+            # Also grab any link card title/description (e.g. "Turn any TV into a retro split-flap display")
+            card_title = await parent_article.query_selector('[data-testid="card.layoutLarge.detail"] span, [data-testid="card.layoutSmall.detail"] span')
+            if card_title:
+                card_text = await card_title.inner_text()
+                if card_text and mention["parent_text"]:
+                    mention["parent_text"] += f"\n\nLinked page: {card_text}"
+                elif card_text:
+                    mention["parent_text"] = card_text
+
+            # Screenshot the parent tweet's media (images, videos, cards)
+            # Look for media container
+            media = await parent_article.query_selector('[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="card.wrapper"]')
+            if media:
+                screenshot_bytes = await media.screenshot()
+            else:
+                # Screenshot the whole parent tweet article
+                screenshot_bytes = await parent_article.screenshot()
+
+            if screenshot_bytes:
+                import base64
+                mention["parent_screenshot"] = base64.b64encode(screenshot_bytes).decode("utf-8")
+                logger.info(
+                    "Captured parent tweet screenshot for @%s (%d bytes)",
+                    mention["twitter_username"], len(screenshot_bytes),
+                )
+
+        except Exception as e:
+            logger.warning("Failed to enrich reply for tweet %s: %s", mention["tweet_id"], e)
+
+        return mention
 
     async def _submit_mention_to_backend(self, mention: dict):
         """POST the mention to our backend API to trigger a build."""
@@ -206,6 +259,11 @@ class TwitterMentionScraper:
                     mentions = await self._scrape_mentions()
                     for m in mentions:
                         self._seen_tweet_ids.add(m["tweet_id"])
+                        # If the mention text is short (e.g. "Build me" or "Build me this"),
+                        # it's likely a reply to another tweet — screenshot the parent
+                        prompt = m["tweet_text"].replace("@builddy", "").replace("@Builddy", "").strip()
+                        if len(prompt) < 80 or "build" in prompt.lower():
+                            m = await self._enrich_reply(m)
                         await self._submit_mention_to_backend(m)
 
                     if mentions:

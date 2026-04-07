@@ -36,3 +36,5 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+backend/.twitter_browser_state/
+frontend/tsconfig.tsbuildinfo

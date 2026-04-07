@@ -32,9 +32,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
             {/* Logo */}
             <Link href="/" className="flex items-center gap-2.5 group">
-              <span className="flex h-8 w-8 items-center justify-center rounded-bento bg-brand-500 text-white font-bold text-sm shadow-sm transition-all group-hover:shadow-glow group-hover:scale-105">
-                B
-              </span>
+              <img
+                src="/logo.jpeg"
+                alt="Builddy"
+                className="h-8 w-8 rounded-xl object-cover shadow-sm transition-all group-hover:shadow-glow group-hover:scale-105"
+              />
               <span className="text-lg font-display font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>
                 Builddy
               </span>

@@ -140,7 +140,19 @@ async def list_processes():
     return {"processes": process_manager.list_running()}
 
 
-# Serve deployed apps as static files
+# Serve thumbnails directly (before the html=True static mount which mangles non-HTML)
 DEPLOYED_DIR = Path(__file__).parent / "deployed"
 DEPLOYED_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.get("/apps/{build_id}/thumbnail.png")
+async def get_thumbnail(build_id: str):
+    """Serve the app screenshot thumbnail."""
+    thumb = DEPLOYED_DIR / build_id / "thumbnail.png"
+    if thumb.exists():
+        return Response(content=thumb.read_bytes(), media_type="image/png")
+    return JSONResponse(status_code=404, content={"error": "No thumbnail"})
+
+
+# Serve deployed apps as static files
 app.mount("/apps", StaticFiles(directory=str(DEPLOYED_DIR), html=True), name="deployed-apps")

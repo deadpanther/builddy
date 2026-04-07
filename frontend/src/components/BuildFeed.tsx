@@ -75,7 +75,7 @@ export function BuildFeed({ refreshTrigger }: BuildFeedProps) {
       ) : (
         <div className="space-y-4 stagger-children">
           {builds.map((build) => (
-            <BuildCard key={build.id} build={build} />
+            <BuildCard key={build.id} build={build} onDeleted={fetchBuilds} />
           ))}
         </div>
       )}

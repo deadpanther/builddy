@@ -53,13 +53,35 @@ def deploy_project(build_id: str, files: dict[str, str]) -> str:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
 
-    # Copy frontend/index.html to root so static serving works
-    frontend_index = app_dir / "frontend" / "index.html"
-    if frontend_index.exists():
-        root_index = app_dir / "index.html"
-        root_index.write_text(
-            frontend_index.read_text(encoding="utf-8"), encoding="utf-8"
-        )
+    # Copy ALL frontend files to root so static serving matches Express behavior.
+    # Express serves `express.static('frontend')` which maps frontend/login.html → /login.html.
+    # We mirror this AND rewrite /api/ paths to include the app prefix.
+    app_base = f"/apps/{build_id}"
+    frontend_dir = app_dir / "frontend"
+    if frontend_dir.is_dir():
+        for file_path in frontend_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+            relative = file_path.relative_to(frontend_dir)
+            root_dest = app_dir / relative
+            root_dest.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                # Rewrite absolute /api/ calls to include the app base path
+                # so fetch('/api/auth/login') becomes fetch('/apps/{id}/api/auth/login')
+                content = content.replace("'/api/", f"'{app_base}/api/")
+                content = content.replace('"/api/', f'"{app_base}/api/')
+                content = content.replace("('/api/", f"('{app_base}/api/")
+                content = content.replace('("/api/', f'("{app_base}/api/')
+                # Also rewrite href/src references to other pages
+                content = content.replace("href='/", f"href='{app_base}/")
+                content = content.replace('href="/', f'href="{app_base}/')
+                content = content.replace("href='/apps/", "href='/apps/")  # don't double-rewrite
+                content = content.replace('href="/apps/', 'href="/apps/')  # don't double-rewrite
+                root_dest.write_text(content, encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                # Binary file — copy as-is
+                root_dest.write_bytes(file_path.read_bytes())
 
     url = f"/apps/{build_id}/"
     logger.info("Deployed project %s (%d files) to %s", build_id, len(files), url)
