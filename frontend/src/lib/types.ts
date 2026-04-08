@@ -22,6 +22,7 @@ export interface Build {
   id: string;
   tweet_id?: string;
   tweet_text?: string;
+  tweet_url?: string;
   twitter_username?: string;
   app_name?: string;
   app_description?: string;
