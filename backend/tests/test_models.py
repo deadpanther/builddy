@@ -1,7 +1,5 @@
 """Tests for models.py."""
 
-import pytest
-from datetime import datetime, timezone
 
 
 class TestBuildModel:
@@ -15,7 +13,7 @@ class TestBuildModel:
     def test_build_creation(self):
         """Test creating a Build instance."""
         from models import Build
-        
+
         build = Build(prompt="Test app")
         assert build.prompt == "Test app"
         assert build.status == "pending"  # Default status
@@ -23,7 +21,7 @@ class TestBuildModel:
     def test_build_default_values(self):
         """Test Build default values."""
         from models import Build
-        
+
         build = Build(prompt="Test")
         assert build.status == "pending"
         assert build.build_type == "text"
@@ -33,7 +31,7 @@ class TestBuildModel:
     def test_build_with_all_fields(self):
         """Test Build with all fields."""
         from models import Build
-        
+
         build = Build(
             prompt="Test app",
             status="deployed",
@@ -42,7 +40,7 @@ class TestBuildModel:
             generated_code="<html></html>",
             deploy_url="/apps/test/",
         )
-        
+
         assert build.prompt == "Test app"
         assert build.status == "deployed"
         assert build.app_name == "TestApp"
@@ -51,7 +49,7 @@ class TestBuildModel:
     def test_build_id_is_string(self):
         """Test that Build ID is a string (UUID)."""
         from models import Build
-        
+
         build = Build(prompt="Test")
         # ID should be set automatically or be None before save
         # After save, it should be a string UUID
@@ -109,8 +107,9 @@ class TestBuildOptionalFields:
 
     def test_generated_files(self):
         """Test generated_files field."""
-        from models import Build
         import json
+
+        from models import Build
         files = {"index.html": "<html></html>", "app.js": "console.log(1);"}
         build = Build(prompt="Test", generated_files=json.dumps(files))
         assert json.loads(build.generated_files) == files

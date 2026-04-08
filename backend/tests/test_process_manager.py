@@ -1,9 +1,8 @@
 """Tests for services/process_manager.py."""
 
-import pytest
-import asyncio
-from unittest.mock import patch, MagicMock, AsyncMock
 from pathlib import Path
+
+import pytest
 
 
 class TestAppProcess:
@@ -12,7 +11,7 @@ class TestAppProcess:
     def test_app_process_creation(self):
         """Test creating an AppProcess instance."""
         from services.process_manager import AppProcess
-        
+
         app = AppProcess(build_id="test-build", port=9100)
         assert app.build_id == "test-build"
         assert app.port == 9100
@@ -22,13 +21,14 @@ class TestAppProcess:
 
     def test_app_process_default_values(self):
         """Test AppProcess default values."""
-        from services.process_manager import AppProcess
         import time
-        
+
+        from services.process_manager import AppProcess
+
         before = time.time()
         app = AppProcess(build_id="test", port=9100)
         after = time.time()
-        
+
         assert before <= app.started_at <= after
         assert before <= app.last_accessed <= after
 
@@ -38,8 +38,8 @@ class TestProcessManagerInit:
 
     def test_init(self):
         """Test ProcessManager initialization."""
-        from services.process_manager import ProcessManager, BASE_PORT
-        
+        from services.process_manager import BASE_PORT, ProcessManager
+
         pm = ProcessManager()
         assert pm._processes == {}
         assert pm._next_port == BASE_PORT
@@ -52,45 +52,45 @@ class TestPortAllocation:
 
     def test_allocate_first_port(self):
         """Test allocating the first port."""
-        from services.process_manager import ProcessManager, BASE_PORT
-        
+        from services.process_manager import BASE_PORT, ProcessManager
+
         pm = ProcessManager()
         port = pm._allocate_port()
-        
+
         assert port == BASE_PORT
         assert port in pm._ports_in_use
 
     def test_allocate_sequential_ports(self):
         """Test allocating multiple ports sequentially."""
-        from services.process_manager import ProcessManager, BASE_PORT
-        
+        from services.process_manager import BASE_PORT, ProcessManager
+
         pm = ProcessManager()
         ports = [pm._allocate_port() for _ in range(5)]
-        
+
         assert ports == [BASE_PORT, BASE_PORT + 1, BASE_PORT + 2, BASE_PORT + 3, BASE_PORT + 4]
 
     def test_release_port(self):
         """Test releasing a port."""
-        from services.process_manager import ProcessManager, BASE_PORT
-        
+        from services.process_manager import ProcessManager
+
         pm = ProcessManager()
         port = pm._allocate_port()
         assert port in pm._ports_in_use
-        
+
         pm._release_port(port)
         assert port not in pm._ports_in_use
 
     def test_reuse_released_port(self):
         """Test that released ports are reused."""
-        from services.process_manager import ProcessManager, BASE_PORT
-        
+        from services.process_manager import ProcessManager
+
         pm = ProcessManager()
         port1 = pm._allocate_port()
         port2 = pm._allocate_port()
-        
+
         pm._release_port(port1)
         port3 = pm._allocate_port()
-        
+
         assert port3 == port1  # Should reuse the released port
 
 

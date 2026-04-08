@@ -1,10 +1,9 @@
 """Build CRUD endpoints — text builds, screenshot builds, and modifications."""
 
-import json
 import asyncio
+import json
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -13,11 +12,18 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
+
 from database import get_session
 
 limiter = Limiter(key_func=get_remote_address)
+from agent.pipeline import (
+    run_modify_fullstack_pipeline,
+    run_modify_pipeline,
+    run_pipeline,
+    run_retry_pipeline,
+    run_screenshot_pipeline,
+)
 from models import Build
-from agent.pipeline import run_pipeline, run_modify_pipeline, run_screenshot_pipeline, run_modify_fullstack_pipeline, run_retry_pipeline
 from services.event_bus import subscribe, unsubscribe
 
 logger = logging.getLogger(__name__)
@@ -25,15 +31,15 @@ router = APIRouter(prefix="/api/builds", tags=["builds"])
 
 
 class BuildCreate(BaseModel):
-    tweet_id: Optional[str] = None
-    tweet_text: Optional[str] = None
-    twitter_username: Optional[str] = None
-    prompt: Optional[str] = None
+    tweet_id: str | None = None
+    tweet_text: str | None = None
+    twitter_username: str | None = None
+    prompt: str | None = None
 
 
 class ScreenshotBuildCreate(BaseModel):
     image_base64: str | list[str]  # single base64 or list of base64 images
-    prompt: Optional[str] = ""  # text instructions (what the app should do)
+    prompt: str | None = ""  # text instructions (what the app should do)
 
 
 class ModifyRequest(BaseModel):
@@ -50,33 +56,33 @@ class CloudDeployRequest(BaseModel):
 
 class BuildResponse(BaseModel):
     id: str
-    tweet_id: Optional[str] = None
-    tweet_text: Optional[str] = None
-    twitter_username: Optional[str] = None
-    app_name: Optional[str] = None
-    app_description: Optional[str] = None
-    prompt: Optional[str] = None
+    tweet_id: str | None = None
+    tweet_text: str | None = None
+    twitter_username: str | None = None
+    app_name: str | None = None
+    app_description: str | None = None
+    prompt: str | None = None
     status: str
-    generated_code: Optional[str] = None
-    deploy_url: Optional[str] = None
-    parent_build_id: Optional[str] = None
+    generated_code: str | None = None
+    deploy_url: str | None = None
+    parent_build_id: str | None = None
     build_type: str = "text"
-    complexity: Optional[str] = "simple"
-    thumbnail_url: Optional[str] = None
-    reasoning_log: Optional[str] = None
-    file_manifest: Optional[str] = None
-    generated_files: Optional[str] = None
-    zip_url: Optional[str] = None
-    tech_stack: Optional[str] = None
+    complexity: str | None = "simple"
+    thumbnail_url: str | None = None
+    reasoning_log: str | None = None
+    file_manifest: str | None = None
+    generated_files: str | None = None
+    zip_url: str | None = None
+    tech_stack: str | None = None
     remix_count: int = 0
-    deploy_provider: Optional[str] = None
-    deploy_external_url: Optional[str] = None
-    deploy_status: Optional[str] = None
-    steps: Optional[str] = None
-    error: Optional[str] = None
+    deploy_provider: str | None = None
+    deploy_external_url: str | None = None
+    deploy_status: str | None = None
+    steps: str | None = None
+    error: str | None = None
     created_at: datetime
     updated_at: datetime
-    deployed_at: Optional[datetime] = None
+    deployed_at: datetime | None = None
 
     class Config:
         from_attributes = True
@@ -137,7 +143,7 @@ async def create_build_from_image(request: Request, data: ScreenshotBuildCreate,
 
 @router.get("", response_model=list[BuildResponse])
 async def list_builds(
-    status: Optional[str] = None,
+    status: str | None = None,
     limit: int = 50,
     offset: int = 0,
     session: Session = Depends(get_session),
@@ -194,7 +200,7 @@ async def stream_build(build_id: str, request: Request):
                     if event_type == "status" and event.get("status") in ("deployed", "failed"):
                         yield {"event": "done", "data": json.dumps({"status": event.get("status")})}
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send keepalive ping
                     yield {"event": "ping", "data": "{}"}
         finally:
@@ -216,8 +222,8 @@ async def deploy_build(build_id: str, session: Session = Depends(get_session)):
     deploy_url = deploy_html(build_id, build.generated_code)
     build.deploy_url = deploy_url
     build.status = "deployed"
-    build.deployed_at = datetime.now(timezone.utc)
-    build.updated_at = datetime.now(timezone.utc)
+    build.deployed_at = datetime.now(UTC)
+    build.updated_at = datetime.now(UTC)
     session.add(build)
     session.commit()
     session.refresh(build)
@@ -294,7 +300,7 @@ async def remix_build(build_id: str, data: RemixRequest, session: Session = Depe
 
     # Increment remix_count on the original build
     original.remix_count = original.remix_count + 1
-    original.updated_at = datetime.now(timezone.utc)
+    original.updated_at = datetime.now(UTC)
     session.add(original)
 
     session.commit()
@@ -385,7 +391,7 @@ async def cloud_deploy_build(
     build.deploy_status = result.get("status", "pending")
     if result.get("url"):
         build.deploy_external_url = result["url"]
-    build.updated_at = datetime.now(timezone.utc)
+    build.updated_at = datetime.now(UTC)
     session.add(build)
     session.commit()
     session.refresh(build)
@@ -419,7 +425,7 @@ async def get_cloud_deploy_status(build_id: str, session: Session = Depends(get_
         build.deploy_status = status_info["status"]
         if status_info.get("url"):
             build.deploy_external_url = status_info["url"]
-        build.updated_at = datetime.now(timezone.utc)
+        build.updated_at = datetime.now(UTC)
         session.add(build)
         session.commit()
 
@@ -480,7 +486,7 @@ async def update_build_file(build_id: str, payload: dict, session: Session = Dep
     if ".." in file_path or file_path.startswith("/") or file_path.startswith("\\"):
         raise HTTPException(status_code=400, detail="Invalid file path")
 
-    from services.deployer import deploy_html, deploy_project, DEPLOYED_DIR
+    from services.deployer import deploy_html, deploy_project
 
     # Update generated_files or generated_code in DB
     if build.generated_files:
@@ -494,7 +500,7 @@ async def update_build_file(build_id: str, payload: dict, session: Session = Dep
         build.generated_code = content
         deploy_html(build_id, content)
 
-    build.updated_at = datetime.now(timezone.utc)
+    build.updated_at = datetime.now(UTC)
     session.add(build)
     session.commit()
     session.refresh(build)
@@ -566,7 +572,7 @@ async def retry_build(request: Request, build_id: str, session: Session = Depend
     # Allow retry on failed OR stuck builds (coding/planning/reviewing that hung)
     terminal_ok = {"deployed"}
     if build.status in terminal_ok:
-        raise HTTPException(status_code=400, detail=f"Build already deployed")
+        raise HTTPException(status_code=400, detail="Build already deployed")
 
     # Parse failed_at stage from error or current status
     failed_at = build.status  # default: resume from current stuck stage
@@ -578,7 +584,7 @@ async def retry_build(request: Request, build_id: str, session: Session = Depend
     # Reset status to pending so the UI shows it's retrying
     build.status = "pending"
     build.error = None
-    build.updated_at = datetime.now(timezone.utc)
+    build.updated_at = datetime.now(UTC)
     session.add(build)
     session.commit()
     session.refresh(build)
@@ -596,6 +602,7 @@ async def delete_build(build_id: str, session: Session = Depends(get_session)):
 
     # Delete deployed files from disk
     import shutil
+
     from services.deployer import DEPLOYED_DIR
     app_dir = DEPLOYED_DIR / build_id
     if app_dir.exists():
@@ -650,12 +657,12 @@ async def generate_tests_for_build(build_id: str, session: Session = Depends(get
     else:
         build.generated_files = json.dumps(test_files)
 
-    build.updated_at = datetime.now(timezone.utc)
+    build.updated_at = datetime.now(UTC)
     session.add(build)
     session.commit()
 
     # Redeploy with test files included
-    from services.deployer import deploy_html, deploy_project
+    from services.deployer import deploy_project
 
     if build.complexity in ("standard", "fullstack"):
         files = json.loads(build.generated_files)

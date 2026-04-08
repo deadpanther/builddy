@@ -1,7 +1,8 @@
 """Tests for agent/autopilot.py."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestAutopilotModule:
@@ -30,35 +31,35 @@ class TestAutopilotFixLoop:
     async def test_fix_loop_no_errors(self):
         """Test fix loop when no errors are found."""
         from agent.autopilot import autopilot_fix_loop
-        
+
         # Mock validate_html to return no errors
         mock_result = {
             "console_errors": [],
             "screenshot_base64": "abc123",
             "has_errors": False,
         }
-        
+
         with patch('services.visual_validator.validate_html', new=AsyncMock(return_value=mock_result)):
             code, iterations = await autopilot_fix_loop("<html><body>Test</body></html>")
-        
+
         assert iterations == 1
 
     @pytest.mark.asyncio
     async def test_fix_loop_with_callback(self):
         """Test fix loop calls callback."""
         from agent.autopilot import autopilot_fix_loop
-        
+
         mock_result = {
             "console_errors": [],
             "screenshot_base64": "abc123",
             "has_errors": False,
         }
-        
+
         callback = MagicMock()
-        
+
         with patch('services.visual_validator.validate_html', new=AsyncMock(return_value=mock_result)):
             await autopilot_fix_loop("<html></html>", on_iteration=callback)
-        
+
         # Callback should have been called
         assert callback.called
 
@@ -66,10 +67,10 @@ class TestAutopilotFixLoop:
     async def test_fix_loop_handles_validation_error(self):
         """Test fix loop handles validation errors."""
         from agent.autopilot import autopilot_fix_loop
-        
+
         with patch('services.visual_validator.validate_html', new=AsyncMock(side_effect=Exception("Browser error"))):
             code, iterations = await autopilot_fix_loop("<html></html>")
-        
+
         # Should return original code on error
         assert code == "<html></html>"
 
@@ -81,24 +82,24 @@ class TestAttemptFix:
     async def test_attempt_fix_with_screenshot(self):
         """Test _attempt_fix with screenshot."""
         from agent.autopilot import _attempt_fix
-        
+
         mock_response = "```html\n<html><body>Fixed</body></html>\n```"
-        
+
         with patch('agent.autopilot.vision_chat', new=AsyncMock(return_value=mock_response)):
             result = await _attempt_fix("<html></html>", "Test error", "screenshot_base64")
-        
+
         assert "Fixed" in result or result is not None
 
     @pytest.mark.asyncio
     async def test_attempt_fix_without_screenshot(self):
         """Test _attempt_fix without screenshot."""
         from agent.autopilot import _attempt_fix
-        
+
         mock_response = "```html\n<html><body>Fixed</body></html>\n```"
-        
+
         with patch('agent.autopilot.chat', new=AsyncMock(return_value=mock_response)):
             result = await _attempt_fix("<html></html>", "Test error", None)
-        
+
         assert result is not None
 
 

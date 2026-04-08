@@ -4,29 +4,29 @@ import asyncio
 import json
 import logging
 
+from agent.components import COMPONENT_LIBRARY
 from agent.helpers import (
-    STEP_TIMEOUT,
     FILE_TIMEOUT,
-    _update_build,
-    _add_step,
+    STEP_TIMEOUT,
     _add_reasoning,
+    _add_step,
     _strip_fences,
+    _update_build,
 )
-from agent.llm import chat, chat_with_reasoning, chat_streaming
+from agent.llm import chat, chat_streaming, chat_with_reasoning
 from agent.prompts import (
     CLASSIFY_SYSTEM,
-    MANIFEST_SYSTEM,
-    FILEGEN_SYSTEM,
-    INTEGRATION_SYSTEM,
-    DOCKERFILE_TEMPLATE,
     DOCKER_COMPOSE_TEMPLATE,
+    DOCKERFILE_TEMPLATE,
+    FILEGEN_SYSTEM,
+    IMPACT_SYSTEM,
+    INTEGRATION_SYSTEM,
+    MANIFEST_SYSTEM,
+    MODIFY_FILE_SYSTEM,
     PACKAGE_JSON_TEMPLATE,
     README_TEMPLATE,
-    IMPACT_SYSTEM,
-    MODIFY_FILE_SYSTEM,
     SEED_SYSTEM,
 )
-from agent.components import COMPONENT_LIBRARY
 from config import settings
 from services.event_bus import publish as _publish_event
 
@@ -116,8 +116,8 @@ async def plan_manifest(build_id: str, prompt: str, classification: dict) -> dic
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0]
         manifest = json.loads(text)
-    except (json.JSONDecodeError, IndexError):
-        raise ValueError("GLM returned invalid manifest JSON — cannot proceed")
+    except (json.JSONDecodeError, IndexError) as e:
+        raise ValueError("GLM returned invalid manifest JSON — cannot proceed") from e
 
     # Sort files by generation order
     manifest["files"] = sorted(manifest.get("files", []), key=lambda f: f.get("order", 99))
@@ -196,10 +196,11 @@ async def generate_file(
     )
 
     # Only enable web search for the MAIN frontend page (index.html), not every file
-    tools = None
+    # TODO: Pass tools to LLM API when web search is implemented
+    _tools = None  # noqa: F841
     is_main_page = file_path == "frontend/index.html"
     if is_main_page and settings.ENABLE_WEB_SEARCH:
-        tools = [
+        _tools = [
             {
                 "type": "web_search",
                 "web_search": {
@@ -246,7 +247,7 @@ async def generate_file(
             timeout=FILE_TIMEOUT,
         )
         code = raw.strip()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _add_step(build_id, f"Streaming timed out for {file_path} — trying fallback...")
 
     # Strip markdown fences if present
@@ -275,7 +276,7 @@ async def generate_file(
                 timeout=FILE_TIMEOUT,
             )
             code = _strip_fences(fallback_result)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _add_step(build_id, f"Fallback also timed out for {file_path}")
             code = ""
 
@@ -345,7 +346,7 @@ def _extract_interface(content: str, max_lines: int = 50) -> str:
 
     # Also grab lines with API routes, fetch calls, table definitions
     important = []
-    for i, line in enumerate(lines[max_lines:], start=max_lines):
+    for _i, line in enumerate(lines[max_lines:], start=max_lines):
         stripped = line.strip()
         if any(kw in stripped for kw in [
             "app.get(", "app.post(", "app.put(", "app.delete(",
@@ -449,7 +450,7 @@ async def integration_review(build_id: str, manifest: dict, all_files: dict[str,
         else:
             _add_step(build_id, "Integration review passed — no issues found")
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Integration review timed out (non-fatal)")
         _add_step(build_id, "Integration review timed out — skipping (app still works)")
     except Exception as e:
@@ -589,8 +590,8 @@ async def analyze_impact(build_id: str, modification: str, manifest: dict, exist
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0]
         impact = json.loads(text)
-    except (json.JSONDecodeError, IndexError):
-        raise ValueError("GLM returned invalid impact analysis JSON")
+    except (json.JSONDecodeError, IndexError) as e:
+        raise ValueError("GLM returned invalid impact analysis JSON") from e
 
     create_count = len(impact.get("files_to_create", []))
     modify_count = len(impact.get("files_to_modify", []))

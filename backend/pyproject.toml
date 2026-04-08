@@ -4,6 +4,17 @@ version = "0.1.0"
 description = "Builddy API - AI app builder powered by GLM"
 requires-python = ">=3.11"
 license = {text = "MIT"}
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "sqlmodel>=0.0.14",
+    "httpx>=0.25.0",
+    "python-dotenv>=1.0.0",
+    "pydantic-settings>=2.1.0",
+    "playwright>=1.58.0",
+    "sse-starlette>=3.3.4",
+    "slowapi>=0.1.9",
+]
 
 [tool.ruff]
 target-version = "py311"
@@ -15,10 +26,17 @@ ignore = [
     "S603",  # subprocess calls (we've fixed shell=True)
     "S607",  # partial path for subprocess
     "E501",  # line length (handled by formatter)
+    "S104",  # binding to all interfaces (needed for Docker)
+    "B008",  # Depends in argument defaults (standard FastAPI pattern)
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]  # allow assert in tests
+"tests/*" = ["S101", "F841", "SIM105", "SIM117", "S110", "SIM115", "SIM118"]  # allow various patterns in tests
+"routers/builds.py" = ["E402", "S110"]  # imports after limiter init, silent except
+"services/cloud_deploy.py" = ["SIM108", "F841"]  # ternary preference, unused var
+"services/event_bus.py" = ["SIM105"]  # contextlib.suppress preference
+"services/process_manager.py" = ["SIM105", "B904"]  # contextlib.suppress, raise from
+"services/visual_validator.py" = ["SIM115"]  # context manager for temp files
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -29,6 +47,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
+    "ruff>=0.8.0",
 ]
 
 [dependency-groups]
@@ -36,16 +55,5 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
-]
-
-dependencies = [
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "sqlmodel>=0.0.14",
-    "httpx>=0.25.0",
-    "python-dotenv>=1.0.0",
-    "pydantic-settings>=2.1.0",
-    "playwright>=1.58.0",
-    "sse-starlette>=3.3.4",
-    "slowapi>=0.1.9",
+    "ruff>=0.8.0",
 ]

@@ -1,14 +1,15 @@
 """Twitter API v2 service — search mentions (Bearer) and post replies (OAuth 1.0a)."""
 
+import base64
 import hashlib
 import hmac
 import logging
 import time
 import urllib.parse
 import uuid
-import base64
 
 import httpx
+
 from config import settings
 
 logger = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 """Buildy configuration — reads from .env via pydantic-settings."""
 
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List
 
 
 class Settings(BaseSettings):
@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     @property
-    def cors_origins_list(self) -> List[str]:
+    def cors_origins_list(self) -> list[str]:
         import json
         try:
             return json.loads(self.CORS_ORIGINS)

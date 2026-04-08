@@ -7,18 +7,18 @@ import logging
 
 from agent.helpers import (
     STEP_TIMEOUT,
-    _update_build,
-    _add_step,
     _add_reasoning,
+    _add_step,
     _strip_fences,
+    _update_build,
 )
 from agent.llm import chat, chat_with_reasoning, generate_image
 from agent.prompts import (
+    CODE_SYSTEM,
+    IMAGE_PROMPT_TEMPLATE,
     PARSE_SYSTEM,
     PLAN_SYSTEM,
-    CODE_SYSTEM,
     REVIEW_SYSTEM,
-    IMAGE_PROMPT_TEMPLATE,
 )
 from config import settings
 
@@ -172,7 +172,7 @@ async def generate_code(build_id: str, prompt: str, plan: str) -> str:
             ),
             timeout=STEP_TIMEOUT,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _add_step(build_id, "Code generation timed out — falling back...")
         result = {"content": "", "reasoning": ""}
 
@@ -266,8 +266,8 @@ async def generate_thumbnail(build_id: str, app_description: str):
 
     # Try to screenshot the live app first
     try:
-        from services.visual_validator import validate_html
         from services.deployer import DEPLOYED_DIR
+        from services.visual_validator import validate_html
 
         # Read the deployed index.html
         index_path = DEPLOYED_DIR / build_id / "index.html"

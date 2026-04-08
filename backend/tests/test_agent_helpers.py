@@ -1,18 +1,16 @@
 """Tests for agent/helpers.py utility functions."""
 
 import json
-from unittest.mock import patch, MagicMock, call
-
-import pytest
+from unittest.mock import patch
 
 from agent.helpers import (
-    _update_build,
-    _add_step,
-    _add_reasoning,
-    _strip_fences,
-    STEP_TIMEOUT,
     FILE_TIMEOUT,
+    STEP_TIMEOUT,
     VISUAL_TIMEOUT,
+    _add_reasoning,
+    _add_step,
+    _strip_fences,
+    _update_build,
 )
 
 
@@ -28,18 +26,18 @@ class TestUpdateBuild:
     def test_update_build_updates_fields(self, db_session):
         """Test that _update_build updates build fields in the database."""
         from models import Build
-        
+
         build = Build(prompt="Test app", status="pending")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         _update_build(build_id, status="coding", app_name="TestApp")
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         # Verify update
         updated = db_session.get(Build, build_id)
         assert updated.status == "coding"
@@ -47,34 +45,34 @@ class TestUpdateBuild:
 
     def test_update_build_updates_timestamp(self, db_session):
         """Test that _update_build updates the updated_at timestamp."""
+
         from models import Build
-        from datetime import datetime, timezone
-        
+
         build = Build(prompt="Timestamp test", status="pending")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         original_updated_at = build.updated_at
         build_id = build.id
-        
+
         _update_build(build_id, status="deploying")
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         assert updated.updated_at > original_updated_at
 
     def test_update_build_publishes_status_event(self, db_session):
         """Test that _update_build publishes event when status changes."""
         from models import Build
-        
+
         build = Build(prompt="Event test", status="pending")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         with patch("agent.helpers._publish_event") as mock_publish:
             _update_build(build_id, status="deployed")
             mock_publish.assert_called_once_with(build_id, "status", {"status": "deployed"})
@@ -82,13 +80,13 @@ class TestUpdateBuild:
     def test_update_build_no_event_when_status_not_changed(self, db_session):
         """Test that _update_build doesn't publish event for non-status updates."""
         from models import Build
-        
+
         build = Build(prompt="No event test", status="pending")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         with patch("agent.helpers._publish_event") as mock_publish:
             _update_build(build_id, app_name="New Name")
             mock_publish.assert_not_called()
@@ -101,13 +99,13 @@ class TestUpdateBuild:
     def test_update_build_multiple_fields(self, db_session):
         """Test updating multiple fields at once."""
         from models import Build
-        
+
         build = Build(prompt="Multi-field test")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         _update_build(
             build_id,
             status="deployed",
@@ -115,10 +113,10 @@ class TestUpdateBuild:
             generated_code="<html></html>",
             deploy_url="/apps/test/",
         )
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         assert updated.status == "deployed"
         assert updated.app_name == "My App"
@@ -130,18 +128,18 @@ class TestAddStep:
     def test_add_step_appends_to_steps(self, db_session):
         """Test that _add_step appends step to build's steps array."""
         from models import Build
-        
+
         build = Build(prompt="Step test", steps=None)
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         _add_step(build_id, "Planning app structure")
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         steps = json.loads(updated.steps)
         assert len(steps) == 1
@@ -150,20 +148,20 @@ class TestAddStep:
     def test_add_step_appends_multiple(self, db_session):
         """Test that multiple calls append to steps array."""
         from models import Build
-        
+
         build = Build(prompt="Multiple steps test", steps=None)
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         _add_step(build_id, "Step 1")
         _add_step(build_id, "Step 2")
         _add_step(build_id, "Step 3")
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         steps = json.loads(updated.steps)
         assert len(steps) == 3
@@ -172,19 +170,19 @@ class TestAddStep:
     def test_add_step_preserves_existing_steps(self, db_session):
         """Test that _add_step preserves existing steps."""
         from models import Build
-        
+
         existing_steps = json.dumps(["Existing step 1", "Existing step 2"])
         build = Build(prompt="Preserve steps test", steps=existing_steps)
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         _add_step(build_id, "New step")
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         steps = json.loads(updated.steps)
         assert len(steps) == 3
@@ -194,13 +192,13 @@ class TestAddStep:
     def test_add_step_publishes_event(self, db_session):
         """Test that _add_step publishes step event."""
         from models import Build
-        
+
         build = Build(prompt="Event step test")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         with patch("agent.helpers._publish_event") as mock_publish:
             _add_step(build_id, "Test step")
             mock_publish.assert_called_once_with(build_id, "step", {"step": "Test step"})
@@ -212,21 +210,21 @@ class TestAddStep:
 
     def test_add_step_updates_timestamp(self, db_session):
         """Test that _add_step updates updated_at."""
+
         from models import Build
-        from datetime import datetime, timezone
-        
+
         build = Build(prompt="Timestamp step test")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         original_updated_at = build.updated_at
         build_id = build.id
-        
+
         _add_step(build_id, "A step")
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         assert updated.updated_at > original_updated_at
 
@@ -235,18 +233,18 @@ class TestAddReasoning:
     def test_add_reasoning_appends_to_log(self, db_session):
         """Test that _add_reasoning appends to reasoning_log."""
         from models import Build
-        
+
         build = Build(prompt="Reasoning test", reasoning_log=None)
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         _add_reasoning(build_id, "planning", "I decided to use React because...")
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         log = json.loads(updated.reasoning_log)
         assert len(log) == 1
@@ -256,20 +254,20 @@ class TestAddReasoning:
     def test_add_reasoning_multiple_stages(self, db_session):
         """Test adding reasoning from multiple stages."""
         from models import Build
-        
+
         build = Build(prompt="Multi-reasoning test", reasoning_log=None)
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         _add_reasoning(build_id, "prd", "User needs a dashboard")
         _add_reasoning(build_id, "architecture", "Using microservices")
         _add_reasoning(build_id, "coding", "Implemented caching")
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         log = json.loads(updated.reasoning_log)
         assert len(log) == 3
@@ -279,19 +277,19 @@ class TestAddReasoning:
     def test_add_reasoning_truncates_long_reasoning(self, db_session):
         """Test that reasoning is truncated to 2000 chars."""
         from models import Build
-        
+
         build = Build(prompt="Truncation test", reasoning_log=None)
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         long_reasoning = "x" * 5000
         _add_reasoning(build_id, "test", long_reasoning)
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         log = json.loads(updated.reasoning_log)
         assert len(log[0]["reasoning"]) == 2000
@@ -299,16 +297,16 @@ class TestAddReasoning:
     def test_add_reasoning_skips_empty_reasoning(self, db_session):
         """Test that _add_reasoning does nothing for empty reasoning."""
         from models import Build
-        
+
         build = Build(prompt="Empty reasoning test", reasoning_log=None)
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         _add_reasoning(build_id, "test", "")
         _add_reasoning(build_id, "test", None)
-        
+
         updated = db_session.get(Build, build_id)
         # Should still be None (not even an empty array)
         assert updated.reasoning_log is None
@@ -321,19 +319,19 @@ class TestAddReasoning:
     def test_add_reasoning_preserves_existing_log(self, db_session):
         """Test that _add_reasoning preserves existing entries."""
         from models import Build
-        
+
         existing_log = json.dumps([{"stage": "old", "reasoning": "old reason"}])
         build = Build(prompt="Preserve log test", reasoning_log=existing_log)
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         _add_reasoning(build_id, "new", "new reason")
-        
+
         # Expire session cache to see changes from other sessions
         db_session.expire_all()
-        
+
         updated = db_session.get(Build, build_id)
         log = json.loads(updated.reasoning_log)
         assert len(log) == 2

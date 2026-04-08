@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 
-from agent.llm import chat_with_reasoning, chat
+from agent.llm import chat, chat_with_reasoning
 from agent.prompts import TEST_GEN_SYSTEM
 from config import settings
 
@@ -51,7 +51,7 @@ async def _generate_simple_tests(code: str, app_name: str) -> dict[str, str]:
             timeout=120,
         )
         test_code = _extract_code(result["content"])
-    except (asyncio.TimeoutError, Exception) as e:
+    except (TimeoutError, Exception) as e:
         logger.warning("Test generation with reasoning failed: %s, trying fast model", e)
         try:
             raw = await asyncio.wait_for(
@@ -126,7 +126,7 @@ async def _generate_fullstack_tests(
             timeout=120,
         )
         test_code = _extract_code(result["content"], lang="javascript")
-    except (asyncio.TimeoutError, Exception) as e:
+    except (TimeoutError, Exception) as e:
         logger.warning("Fullstack test generation failed: %s, trying fast model", e)
         try:
             raw = await asyncio.wait_for(

@@ -1,7 +1,6 @@
 """Cloud deployment service -- deploy Builddy projects to Railway and Render."""
 
 import asyncio
-import json
 import logging
 import os
 import shutil
@@ -79,7 +78,7 @@ def get_manual_deploy_instructions(build_id: str, app_name: str) -> dict:
     safe_name = app_name.replace(" ", "-").lower()[:40]
     return {
         "message": "API tokens not configured. Deploy manually using one of these options:",
-        "download_first": f"Download the project zip, then use one of the commands below.",
+        "download_first": "Download the project zip, then use one of the commands below.",
         "options": [
             {
                 "provider": "railway",

@@ -7,7 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent.pipeline import _strip_fences
 
-
 # ---------------------------------------------------------------------------
 # _strip_fences: ```html fences
 # ---------------------------------------------------------------------------

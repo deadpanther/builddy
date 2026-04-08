@@ -1,7 +1,5 @@
 """Tests for agent/pipeline.py."""
 
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestPipelineModule:
@@ -34,7 +32,7 @@ class TestPipelineConstants:
     def test_module_has_functions(self):
         """Test that module has expected functions."""
         from agent import pipeline
-        
+
         functions = [f for f in dir(pipeline) if not f.startswith('_')]
         assert len(functions) > 0
 
@@ -44,7 +42,7 @@ class TestPipelineImports:
 
     def test_imports_helpers(self):
         """Test that pipeline imports helpers."""
-        from agent.pipeline import _update_build, _add_step
+        from agent.pipeline import _add_step, _update_build
         assert callable(_update_build)
         assert callable(_add_step)
 

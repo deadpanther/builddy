@@ -24,6 +24,11 @@ os.environ["ENABLE_TWITTER_SCRAPER"] = "false"
 # Patch heavyweight services BEFORE importing app modules
 # ---------------------------------------------------------------------------
 
+# Import httpx first (needed by services)
+import httpx  # noqa: E402
+
+# Import services modules so they can be patched
+
 # Patch twitter scraper to avoid real network calls at import time
 _twitter_scraper_mock = MagicMock()
 _twitter_scraper_mock.start = MagicMock()
@@ -53,9 +58,6 @@ for p in _patches:
 # NOW import app modules (after environment and patches are in place)
 from database import create_db_and_tables, engine  # noqa: E402
 from main import app  # noqa: E402
-
-import httpx  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

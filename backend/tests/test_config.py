@@ -1,7 +1,5 @@
 """Tests for config.py."""
 
-import pytest
-from unittest.mock import patch
 
 
 class TestSettings:

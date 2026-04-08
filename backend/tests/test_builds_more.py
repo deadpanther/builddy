@@ -1,8 +1,8 @@
 """Additional tests for routers/builds.py - more endpoints."""
 
-import pytest
 import json
-from unittest.mock import patch, AsyncMock
+
+import pytest
 
 
 class TestBuildChain:
@@ -18,14 +18,14 @@ class TestBuildChain:
     async def test_get_build_chain_success(self, client, db_session):
         """Test getting build chain."""
         from models import Build
-        
+
         # Create parent and child builds
         parent = Build(prompt="Original", status="deployed", deploy_url="/apps/parent/")
         db_session.add(parent)
         db_session.commit()
         db_session.refresh(parent)
         parent_id = parent.id
-        
+
         child = Build(
             prompt="Modified",
             status="deployed",
@@ -34,7 +34,7 @@ class TestBuildChain:
         )
         db_session.add(child)
         db_session.commit()
-        
+
         resp = await client.get(f"/api/builds/{parent_id}/chain")
         assert resp.status_code == 200
         data = resp.json()
@@ -56,16 +56,16 @@ class TestDeleteBuild:
     async def test_delete_build_success(self, client, db_session):
         """Test deleting a build."""
         from models import Build
-        
+
         build = Build(prompt="To delete", status="pending")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         resp = await client.delete(f"/api/builds/{build_id}")
         assert resp.status_code == 200
-        
+
         # Verify build is deleted
         resp2 = await client.get(f"/api/builds/{build_id}")
         assert resp2.status_code == 404
@@ -87,13 +87,13 @@ class TestUpdateBuildFile:
     async def test_update_file_wrong_status(self, client, db_session):
         """Test updating file for non-deployed build."""
         from models import Build
-        
+
         build = Build(prompt="Test", status="pending")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         resp = await client.put(
             f"/api/builds/{build_id}/files",
             json={"path": "index.html", "content": "<html></html>"}
@@ -114,14 +114,14 @@ class TestGetBuildSteps:
     async def test_get_steps_success(self, client, db_session):
         """Test getting build steps."""
         from models import Build
-        
+
         steps = json.dumps(["Step 1", "Step 2", "Step 3"])
         build = Build(prompt="Test", status="deployed", steps=steps)
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         resp = await client.get(f"/api/builds/{build_id}/steps")
         assert resp.status_code == 200
         data = resp.json()
@@ -141,13 +141,13 @@ class TestDownloadBuild:
     async def test_download_no_code(self, client, db_session):
         """Test downloading build with no code."""
         from models import Build
-        
+
         build = Build(prompt="Empty", status="pending")
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         resp = await client.get(f"/api/builds/{build_id}/download")
         # Should return error or redirect
         assert resp.status_code in [400, 404]
@@ -168,12 +168,12 @@ class TestListBuilds:
     async def test_list_builds_with_data(self, client, db_session):
         """Test listing builds with data."""
         from models import Build
-        
+
         for i in range(3):
             build = Build(prompt=f"Build {i}", status="pending")
             db_session.add(build)
         db_session.commit()
-        
+
         resp = await client.get("/api/builds")
         assert resp.status_code == 200
         data = resp.json()
@@ -183,12 +183,12 @@ class TestListBuilds:
     async def test_list_builds_pagination(self, client, db_session):
         """Test listing builds with pagination."""
         from models import Build
-        
+
         for i in range(10):
             build = Build(prompt=f"Build {i}", status="pending")
             db_session.add(build)
         db_session.commit()
-        
+
         resp = await client.get("/api/builds?limit=5")
         assert resp.status_code == 200
         data = resp.json()

@@ -7,17 +7,17 @@ import logging
 from agent.helpers import (
     STEP_TIMEOUT,
     VISUAL_TIMEOUT,
-    _update_build,
-    _add_step,
     _add_reasoning,
+    _add_step,
     _strip_fences,
+    _update_build,
 )
 from agent.llm import chat, chat_with_reasoning, vision_chat
 from agent.prompts import (
-    PRD_SYSTEM,
     DESIGN_SYSTEM_PROMPT,
-    QA_SYSTEM,
     POLISH_SYSTEM,
+    PRD_SYSTEM,
+    QA_SYSTEM,
     VISUAL_FIX_SYSTEM,
 )
 from config import settings
@@ -48,7 +48,7 @@ async def write_prd(build_id: str, prompt: str) -> dict:
         if reasoning:
             _add_reasoning(build_id, "prd", reasoning)
             _add_step(build_id, f"[thinking] PM reasoned through requirements ({len(reasoning)} chars)")
-    except (asyncio.TimeoutError, Exception) as e:
+    except (TimeoutError, Exception) as e:
         logger.warning("PRD with reasoning failed/timed out, falling back: %s", e)
         _add_step(build_id, "PRD thinking timed out — retrying without thinking...")
         try:
@@ -64,7 +64,7 @@ async def write_prd(build_id: str, prompt: str) -> dict:
                 ),
                 timeout=STEP_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             prd_text = ""
 
     try:
@@ -123,7 +123,7 @@ async def create_design_system(build_id: str, prompt: str, prd: dict) -> dict:
         if reasoning:
             _add_reasoning(build_id, "design", reasoning)
             _add_step(build_id, f"[thinking] Designer reasoned through visual language ({len(reasoning)} chars)")
-    except (asyncio.TimeoutError, Exception) as e:
+    except (TimeoutError, Exception) as e:
         logger.warning("Design system failed/timed out, falling back: %s", e)
         _add_step(build_id, "Design agent timed out — retrying with fast model...")
         try:
@@ -139,7 +139,7 @@ async def create_design_system(build_id: str, prompt: str, prd: dict) -> dict:
                 ),
                 timeout=STEP_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             design_text = ""
 
     try:
@@ -181,7 +181,7 @@ async def qa_validate(build_id: str, code: str, prd: dict) -> str:
             ),
             timeout=STEP_TIMEOUT,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _add_step(build_id, "[agent:qa] Timed out — skipping QA (keeping current code)")
         return code
 
@@ -218,7 +218,7 @@ async def polish_pass(build_id: str, code: str) -> str:
             ),
             timeout=STEP_TIMEOUT,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _add_step(build_id, "[agent:polish] Timed out — skipping polish (keeping current code)")
         return code
 
@@ -265,7 +265,7 @@ async def visual_validate(build_id: str, code: str) -> str:
 
         error_context = ""
         if errors:
-            error_context = f"\n\nCONSOLE ERRORS FOUND:\n" + "\n".join(errors[:10])
+            error_context = "\n\nCONSOLE ERRORS FOUND:\n" + "\n".join(errors[:10])
 
         fix_result = await asyncio.wait_for(
             vision_chat(

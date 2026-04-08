@@ -1,6 +1,5 @@
 """Tests for agent/prompts.py."""
 
-import pytest
 
 
 class TestPrompts:
@@ -14,7 +13,7 @@ class TestPrompts:
     def test_prompts_has_content(self):
         """Test that prompts has expected content."""
         from agent import prompts
-        
+
         # Check for common prompt-related attributes
         attrs = dir(prompts)
         # Should have some prompt-related content

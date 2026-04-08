@@ -10,42 +10,42 @@ All heavy lifting is delegated to sub-modules:
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import Session
 
-from agent.helpers import _update_build, _add_step, _strip_fences
+from agent.agents import (
+    create_design_system,
+    polish_pass,
+    qa_validate,
+    visual_validate,
+    write_prd,
+)
+from agent.helpers import _add_step, _strip_fences, _update_build
 from agent.llm import chat, chat_with_reasoning, vision_chat
+from agent.multifile import (
+    analyze_impact,
+    classify_complexity,
+    generate_all_files,
+    generate_deployment_files,
+    generate_file,
+    generate_seed_data,
+    integration_review,
+    modify_existing_file,
+    plan_manifest,
+)
 from agent.prompts import CODE_SYSTEM, MODIFY_SYSTEM, SCREENSHOT_SYSTEM
 from agent.steps import (
+    generate_code,
+    generate_thumbnail,
     parse_request,
     plan_app,
-    generate_code,
     review_code,
-    generate_thumbnail,
 )
-from agent.agents import (
-    write_prd,
-    create_design_system,
-    qa_validate,
-    polish_pass,
-    visual_validate,
-)
-from agent.multifile import (
-    classify_complexity,
-    plan_manifest,
-    generate_file,
-    generate_all_files,
-    integration_review,
-    generate_seed_data,
-    generate_deployment_files,
-    analyze_impact,
-    modify_existing_file,
-)
-from services.deployer import deploy_html, deploy_project, create_project_zip
+from config import settings
 from database import engine
 from models import Build
-from config import settings
+from services.deployer import create_project_zip, deploy_html, deploy_project
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ async def run_fullstack_pipeline(build_id: str, prompt: str, classification: dic
         deploy_url=deploy_url,
         zip_url=zip_url,
         generated_code=main_html,
-        deployed_at=datetime.now(timezone.utc),
+        deployed_at=datetime.now(UTC),
     )
     _add_step(build_id, f"Deployed at {deploy_url}")
     _add_step(build_id, f"Download zip: {zip_url}")
@@ -228,7 +228,7 @@ async def run_modify_fullstack_pipeline(
             generated_code=main_html,
             generated_files=json.dumps(updated_files),
             file_manifest=json.dumps(manifest),
-            deployed_at=datetime.now(timezone.utc),
+            deployed_at=datetime.now(UTC),
         )
         _add_step(build_id, f"Deployed at {deploy_url}")
         _add_step(build_id, f"Download zip: {zip_url}")
@@ -360,7 +360,7 @@ async def _retry_simple(build_id: str, prompt: str, failed_at: str):
         build_id,
         status="deployed",
         deploy_url=deploy_url,
-        deployed_at=datetime.now(timezone.utc),
+        deployed_at=datetime.now(UTC),
         tech_stack=json.dumps({
             "frontend": "HTML + Tailwind CSS + JavaScript",
             "backend": "None (client-only)",
@@ -447,7 +447,7 @@ async def _retry_fullstack(build_id: str, prompt: str, failed_at: str):
         deploy_url=deploy_url,
         zip_url=zip_url,
         generated_code=main_html,
-        deployed_at=datetime.now(timezone.utc),
+        deployed_at=datetime.now(UTC),
     )
     _add_step(build_id, f"Deployed at {deploy_url}")
     _add_step(build_id, f"Download zip: {zip_url}")
@@ -532,7 +532,7 @@ async def run_pipeline(build_id: str):
                 build_id,
                 status="deployed",
                 deploy_url=deploy_url,
-                deployed_at=datetime.now(timezone.utc),
+                deployed_at=datetime.now(UTC),
                 tech_stack=json.dumps({
                     "frontend": "HTML + Tailwind CSS + JavaScript",
                     "backend": "None (client-only)",
@@ -605,7 +605,7 @@ async def run_screenshot_pipeline(build_id: str, images_base64: list[str], text_
             build_id,
             status="deployed",
             deploy_url=deploy_url,
-            deployed_at=datetime.now(timezone.utc),
+            deployed_at=datetime.now(UTC),
         )
         _add_step(build_id, f"Deployed at {deploy_url}")
 
@@ -680,7 +680,7 @@ async def run_modify_pipeline(build_id: str, original_code: str, modification: s
             build_id,
             status="deployed",
             deploy_url=deploy_url,
-            deployed_at=datetime.now(timezone.utc),
+            deployed_at=datetime.now(UTC),
         )
         _add_step(build_id, f"Deployed at {deploy_url}")
         logger.info("Modification %s completed: %s", build_id, deploy_url)

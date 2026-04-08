@@ -1,7 +1,8 @@
 """Tests for agent/agents.py."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestAgentsModule:
@@ -45,17 +46,17 @@ class TestWritePrd:
     async def test_write_prd_returns_dict(self):
         """Test that write_prd returns a dict."""
         from agent.agents import write_prd
-        
+
         mock_response = {
             "content": "# PRD\n## Overview\nThis is a test PRD.",
             "reasoning": "Thoughts about requirements",
         }
-        
+
         with patch('agent.agents.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
             with patch('agent.agents._add_step'):
                 with patch('agent.agents._add_reasoning'):
                     result = await write_prd("test-build-id", "Build a todo app")
-        
+
         assert isinstance(result, dict)
         # Returns PRD data with product_name, user_stories, etc.
         assert "product_name" in result or "user_stories" in result
@@ -63,16 +64,16 @@ class TestWritePrd:
     @pytest.mark.asyncio
     async def test_write_prd_handles_timeout(self):
         """Test that write_prd handles timeout."""
+
         from agent.agents import write_prd
-        import asyncio
-        
+
         mock_response = "# Fallback PRD\n## Overview\nBasic requirements."
-        
-        with patch('agent.agents.chat_with_reasoning', new=AsyncMock(side_effect=asyncio.TimeoutError())):
+
+        with patch('agent.agents.chat_with_reasoning', new=AsyncMock(side_effect=TimeoutError())):
             with patch('agent.agents.chat', new=AsyncMock(return_value=mock_response)):
                 with patch('agent.agents._add_step'):
                     result = await write_prd("test-build-id", "Build a timer app")
-        
+
         assert isinstance(result, dict)
 
 
@@ -83,16 +84,16 @@ class TestCreateDesignSystem:
     async def test_create_design_system_returns_dict(self):
         """Test that create_design_system returns a dict."""
         from agent.agents import create_design_system
-        
+
         mock_response = {
             "content": "Design tokens:\n- primary: blue\n- secondary: gray",
             "reasoning": None,
         }
-        
+
         with patch('agent.agents.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
             with patch('agent.agents._add_step'):
                 result = await create_design_system("test-build-id", "Modern app", {"prd": "test"})
-        
+
         assert isinstance(result, dict)
 
 
@@ -103,16 +104,16 @@ class TestQaValidate:
     async def test_qa_validate_returns_string(self):
         """Test that qa_validate returns a string."""
         from agent.agents import qa_validate
-        
+
         mock_response = {
             "content": "<html><body>Validated</body></html>",
             "reasoning": None,
         }
-        
+
         with patch('agent.agents.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
             with patch('agent.agents._add_step'):
                 result = await qa_validate("test-build-id", "<html></html>", {"prd": "test"})
-        
+
         assert isinstance(result, str)
 
 
@@ -123,16 +124,16 @@ class TestPolishPass:
     async def test_polish_pass_returns_string(self):
         """Test that polish_pass returns a string."""
         from agent.agents import polish_pass
-        
+
         mock_response = {
             "content": "<html><body>Polished</body></html>",
             "reasoning": None,
         }
-        
+
         with patch('agent.agents.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
             with patch('agent.agents._add_step'):
                 result = await polish_pass("test-build-id", "<html></html>")
-        
+
         assert isinstance(result, str)
 
 
@@ -143,13 +144,13 @@ class TestVisualValidate:
     async def test_visual_validate_returns_string(self):
         """Test that visual_validate returns a string."""
         from agent.agents import visual_validate
-        
+
         mock_response = "<html><body>Validated</body></html>"
-        
+
         with patch('agent.agents.vision_chat', new=AsyncMock(return_value=mock_response)):
             with patch('agent.agents._add_step'):
                 result = await visual_validate("test-build-id", "<html></html>")
-        
+
         assert isinstance(result, str)
 
 

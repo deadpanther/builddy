@@ -1,9 +1,9 @@
 """Gallery endpoints — public gallery of deployed apps."""
 
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
+
 from database import get_session
 from models import Build
 

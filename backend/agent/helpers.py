@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import Session
 
@@ -28,7 +28,7 @@ def _update_build(build_id: str, **kwargs):
         if build:
             for k, v in kwargs.items():
                 setattr(build, k, v)
-            build.updated_at = datetime.now(timezone.utc)
+            build.updated_at = datetime.now(UTC)
             session.add(build)
             session.commit()
     # Publish status change to SSE subscribers
@@ -45,7 +45,7 @@ def _add_step(build_id: str, step: str):
             existing = json.loads(build.steps) if build.steps else []
             existing.append(step)
             build.steps = json.dumps(existing)
-            build.updated_at = datetime.now(timezone.utc)
+            build.updated_at = datetime.now(UTC)
             session.add(build)
             session.commit()
     # Publish step to SSE subscribers

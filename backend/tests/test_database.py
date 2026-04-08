@@ -1,6 +1,5 @@
 """Tests for database.py."""
 
-import pytest
 
 
 class TestDatabaseEngine:
@@ -43,11 +42,11 @@ class TestGetSession:
     def test_yields_session(self):
         """Test that generator yields a session."""
         from database import get_session
-        
+
         gen = get_session()
         session = next(gen)
         assert session is not None
-        
+
         # Cleanup
         try:
             next(gen)
@@ -65,8 +64,8 @@ class TestGetNewSession:
 
     def test_returns_session(self):
         """Test that function returns a session."""
-        from database import get_new_session, Session
-        
+        from database import Session, get_new_session
+
         session = get_new_session()
         assert session is not None
         assert isinstance(session, Session)

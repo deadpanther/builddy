@@ -10,15 +10,13 @@ OAuth 1.0a, which the existing twitter.py service handles.
 """
 
 import asyncio
-import json
 import logging
 import re
 import threading
-import time
 from pathlib import Path
 
 import httpx
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 from config import settings
 

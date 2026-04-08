@@ -1,7 +1,8 @@
 """More tests for agent/pipeline.py."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestPipelineFunctions:
@@ -39,25 +40,25 @@ class TestStripFences:
     def test_strip_fences_with_html(self):
         """Test stripping HTML fences."""
         from agent.pipeline import _strip_fences
-        
+
         text = "```html\n<div>Test</div>\n```"
         result = _strip_fences(text)
-        
+
         assert "Test" in result
 
     def test_strip_fences_no_fence(self):
         """Test stripping when no fence present."""
         from agent.pipeline import _strip_fences
-        
+
         text = "just code"
         result = _strip_fences(text)
-        
+
         assert result == "just code"
 
     def test_strip_fences_empty(self):
         """Test stripping empty string."""
         from agent.pipeline import _strip_fences
-        
+
         result = _strip_fences("")
         assert result == ""
 
@@ -88,7 +89,7 @@ class TestSafeThumbnail:
     async def test_safe_thumbnail_handles_error(self):
         """Test that _safe_thumbnail handles errors gracefully."""
         from agent.pipeline import _safe_thumbnail
-        
+
         with patch('agent.pipeline.generate_thumbnail', new=AsyncMock(side_effect=Exception("API Error"))):
             # Should not raise
             await _safe_thumbnail("test-build-id", "Test description")
@@ -97,8 +98,8 @@ class TestSafeThumbnail:
     async def test_safe_thumbnail_success(self):
         """Test that _safe_thumbnail calls generate_thumbnail."""
         from agent.pipeline import _safe_thumbnail
-        
+
         with patch('agent.pipeline.generate_thumbnail', new=AsyncMock()) as mock_gen:
             await _safe_thumbnail("test-build-id", "Test description")
-        
+
         assert mock_gen.called

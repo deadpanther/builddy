@@ -1,7 +1,7 @@
 """Tests for main.py endpoints."""
 
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestHealthEndpoint:

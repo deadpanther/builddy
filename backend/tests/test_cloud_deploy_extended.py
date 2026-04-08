@@ -1,7 +1,8 @@
 """More tests for services/cloud_deploy.py."""
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 
 class TestCloudDeployModule:
@@ -35,7 +36,7 @@ class TestDeployToCloud:
     async def test_deploy_to_cloud_returns_dict(self):
         """Test that deploy_to_cloud returns a dict."""
         from services.cloud_deploy import deploy_to_cloud
-        
+
         # Mock settings to have no GitHub token (will return manual instructions)
         with patch('services.cloud_deploy.settings') as mock_settings:
             mock_settings.GITHUB_TOKEN = None
@@ -45,7 +46,7 @@ class TestDeployToCloud:
                 project_files={"index.html": "<html></html>"},
                 app_name="TestApp"
             )
-        
+
         assert isinstance(result, dict)
         assert result["status"] == "manual"
 
@@ -57,9 +58,9 @@ class TestGetDeployStatus:
     async def test_get_deploy_status_returns_dict(self):
         """Test that get_deploy_status returns a dict."""
         from services.cloud_deploy import get_deploy_status
-        
+
         result = await get_deploy_status(provider="railway", build_id="test-build-id")
-        
+
         assert isinstance(result, dict)
         assert "status" in result
 
@@ -70,9 +71,9 @@ class TestGetManualDeployInstructions:
     def test_get_manual_instructions_returns_dict(self):
         """Test that get_manual_instructions returns a dict."""
         from services.cloud_deploy import get_manual_deploy_instructions
-        
+
         result = get_manual_deploy_instructions("test-build-id", "TestApp")
-        
+
         assert isinstance(result, dict)
         assert "instructions" in result or "steps" in result or "message" in result
 

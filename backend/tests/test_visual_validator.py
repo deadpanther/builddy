@@ -1,7 +1,8 @@
 """Tests for services/visual_validator.py."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestValidateHtml:
@@ -17,7 +18,7 @@ class TestValidateHtml:
     async def test_returns_dict(self):
         """Test that function returns a dictionary."""
         from services.visual_validator import validate_html
-        
+
         # Mock playwright to avoid browser dependency
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
@@ -27,22 +28,22 @@ class TestValidateHtml:
         mock_page.goto = AsyncMock()
         mock_page.wait_for_timeout = AsyncMock()
         mock_page.on = MagicMock()
-        
+
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
         mock_browser.close = AsyncMock()
-        
+
         mock_chromium = AsyncMock()
         mock_chromium.launch = AsyncMock(return_value=mock_browser)
-        
+
         mock_pw = AsyncMock()
         mock_pw.chromium = mock_chromium
         mock_pw.__aenter__ = AsyncMock(return_value=mock_pw)
         mock_pw.__aexit__ = AsyncMock()
-        
+
         with patch('services.visual_validator.async_playwright', return_value=mock_pw):
             result = await validate_html("<html><body>Test</body></html>")
-        
+
         assert isinstance(result, dict)
         assert "console_errors" in result
         assert "screenshot_base64" in result
@@ -53,7 +54,7 @@ class TestValidateHtml:
     async def test_handles_empty_html(self):
         """Test handling of empty HTML."""
         from services.visual_validator import validate_html
-        
+
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
         mock_page = AsyncMock()
@@ -62,22 +63,22 @@ class TestValidateHtml:
         mock_page.goto = AsyncMock()
         mock_page.wait_for_timeout = AsyncMock()
         mock_page.on = MagicMock()
-        
+
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
         mock_browser.close = AsyncMock()
-        
+
         mock_chromium = AsyncMock()
         mock_chromium.launch = AsyncMock(return_value=mock_browser)
-        
+
         mock_pw = AsyncMock()
         mock_pw.chromium = mock_chromium
         mock_pw.__aenter__ = AsyncMock(return_value=mock_pw)
         mock_pw.__aexit__ = AsyncMock()
-        
+
         with patch('services.visual_validator.async_playwright', return_value=mock_pw):
             result = await validate_html("")
-        
+
         assert isinstance(result, dict)
 
 
@@ -94,7 +95,7 @@ class TestValidateDeployedUrl:
     async def test_returns_dict(self):
         """Test that function returns a dictionary."""
         from services.visual_validator import validate_deployed_url
-        
+
         mock_browser = AsyncMock()
         mock_context = AsyncMock()
         mock_page = AsyncMock()
@@ -103,22 +104,22 @@ class TestValidateDeployedUrl:
         mock_page.goto = AsyncMock()
         mock_page.wait_for_timeout = AsyncMock()
         mock_page.on = MagicMock()
-        
+
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_browser.new_context = AsyncMock(return_value=mock_context)
         mock_browser.close = AsyncMock()
-        
+
         mock_chromium = AsyncMock()
         mock_chromium.launch = AsyncMock(return_value=mock_browser)
-        
+
         mock_pw = AsyncMock()
         mock_pw.chromium = mock_chromium
         mock_pw.__aenter__ = AsyncMock(return_value=mock_pw)
         mock_pw.__aexit__ = AsyncMock()
-        
+
         with patch('services.visual_validator.async_playwright', return_value=mock_pw):
             result = await validate_deployed_url("http://example.com")
-        
+
         assert isinstance(result, dict)
         assert "console_errors" in result
 
@@ -126,15 +127,15 @@ class TestValidateDeployedUrl:
     async def test_handles_invalid_url(self):
         """Test handling of invalid URL."""
         from services.visual_validator import validate_deployed_url
-        
+
         # Should return a dict with error when playwright fails
         mock_pw = AsyncMock()
         mock_pw.__aenter__ = AsyncMock(side_effect=Exception("Failed"))
         mock_pw.__aexit__ = AsyncMock()
-        
+
         with patch('services.visual_validator.async_playwright', return_value=mock_pw):
             result = await validate_deployed_url("not-a-url")
-        
+
         assert isinstance(result, dict)
         assert "console_errors" in result
         assert result["has_errors"] is True

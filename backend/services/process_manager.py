@@ -5,8 +5,8 @@ import logging
 import os
 import signal
 import time
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +307,7 @@ class ProcessManager:
                     f"{stderr_text[:500]}"
                 )
             logger.info("npm install completed in %s", app_dir)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             raise RuntimeError(
                 f"npm install timed out after {NPM_INSTALL_TIMEOUT}s"
@@ -342,7 +342,7 @@ class ProcessManager:
                 )
             else:
                 logger.info("Database seeded in %s", app_dir)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             logger.warning("init-data.js timed out after 30s in %s", app_dir)
 
@@ -363,7 +363,7 @@ class ProcessManager:
             await asyncio.wait_for(
                 proc.wait(), timeout=GRACEFUL_SHUTDOWN_SECONDS
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "App %s did not exit gracefully, sending SIGKILL",
                 app.build_id,

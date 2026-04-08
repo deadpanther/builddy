@@ -2,10 +2,10 @@
 
 import asyncio
 import logging
-from typing import Callable
+from collections.abc import Callable
 
-from agent.llm import chat_with_reasoning, vision_chat, chat
-from agent.prompts import AUTOPILOT_FIX_SYSTEM, VISUAL_FIX_SYSTEM
+from agent.llm import chat, chat_with_reasoning, vision_chat
+from agent.prompts import AUTOPILOT_FIX_SYSTEM
 from config import settings
 
 logger = logging.getLogger(__name__)

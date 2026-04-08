@@ -1,7 +1,9 @@
 """Database setup — SQLite + SQLModel."""
 
 import logging
-from sqlmodel import SQLModel, create_engine, Session, text
+
+from sqlmodel import Session, SQLModel, create_engine, text
+
 from config import settings
 
 logger = logging.getLogger(__name__)

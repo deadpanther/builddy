@@ -4,7 +4,9 @@
 import asyncio
 import json
 import logging
+
 import httpx
+
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -278,31 +280,30 @@ async def chat_streaming(
 
     accumulated = ""
     try:
-        async with httpx.AsyncClient(timeout=300) as client:
-            async with client.stream(
-                "POST",
-                f"{settings.GLM_BASE_URL}chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.GLM_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            ) as response:
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            accumulated += content
-                            await on_chunk(accumulated)
-                    except (json.JSONDecodeError, IndexError, KeyError):
-                        continue
+        async with httpx.AsyncClient(timeout=300) as client, client.stream(
+            "POST",
+            f"{settings.GLM_BASE_URL}chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.GLM_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        ) as response:
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        accumulated += content
+                        await on_chunk(accumulated)
+                except (json.JSONDecodeError, IndexError, KeyError):
+                    continue
 
         logger.info("GLM streaming complete: %d chars", len(accumulated))
         return accumulated

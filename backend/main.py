@@ -10,12 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from config import settings
 from database import create_db_and_tables
-from routers import builds, twitter, gallery
+from routers import builds, gallery, twitter
 from routers.twitter import start_twitter_poll, stop_twitter_poll
 from services.deployer import ensure_deployed_dir
 from services.process_manager import process_manager

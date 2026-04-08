@@ -1,7 +1,8 @@
 """Tests for agent/multifile.py."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestMultifileModule:
@@ -65,16 +66,16 @@ class TestClassifyComplexity:
     async def test_classify_complexity_returns_dict(self):
         """Test that classify_complexity returns a dict."""
         from agent.multifile import classify_complexity
-        
+
         mock_response = {
             "content": '{"complexity": "simple", "reason": "Single page app"}',
             "reasoning": None,
         }
-        
+
         with patch('agent.multifile.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
             with patch('agent.multifile._add_step'):
                 result = await classify_complexity("test-build-id", "Build a simple timer")
-        
+
         assert isinstance(result, dict)
         assert "complexity" in result
 
@@ -86,16 +87,16 @@ class TestPlanManifest:
     async def test_plan_manifest_returns_dict(self):
         """Test that plan_manifest returns a dict."""
         from agent.multifile import plan_manifest
-        
+
         mock_response = {
             "content": '{"files": [], "tech_stack": {}}',
             "reasoning": None,
         }
-        
+
         with patch('agent.multifile.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
             with patch('agent.multifile._add_step'):
                 result = await plan_manifest("test-build-id", "Build a todo app", {"complexity": "standard"})
-        
+
         assert isinstance(result, dict)
 
 
@@ -105,15 +106,15 @@ class TestGenerateDeploymentFiles:
     def test_generate_deployment_files_returns_dict(self):
         """Test that generate_deployment_files returns a dict."""
         from agent.multifile import generate_deployment_files
-        
+
         manifest = {
             "app_name": "TestApp",
             "tech_stack": {"frontend": "react", "backend": "node"},
         }
         all_files = {"frontend/index.html": "<html></html>"}
-        
+
         result = generate_deployment_files(manifest, all_files)
-        
+
         assert isinstance(result, dict)
         # Should add Dockerfile and other deployment files
         assert len(result) > len(all_files)
@@ -130,9 +131,9 @@ class TestExtractInterface:
     def test_extract_interface_shortens_content(self):
         """Test that _extract_interface shortens long content."""
         from agent.multifile import _extract_interface
-        
+
         long_content = "line1\n" * 100
         result = _extract_interface(long_content, max_lines=10)
-        
+
         # Should be shorter than original
         assert len(result) < len(long_content)

@@ -1,8 +1,8 @@
 """Tests for the /api/builds endpoints."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # GET /api/builds  — list builds

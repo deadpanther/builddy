@@ -7,10 +7,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from config import settings
-from database import get_session, get_new_session
+from database import get_new_session, get_session
 from models import Build, Mention
-from services.twitter import search_mentions, post_reply, twitter_configured
+from services.twitter import post_reply, search_mentions, twitter_configured
 from services.twitter_scraper import scraper as twitter_scraper
 
 logger = logging.getLogger(__name__)

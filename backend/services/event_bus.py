@@ -1,7 +1,6 @@
 """In-memory pub/sub for streaming build events to SSE clients."""
 
 import asyncio
-import json
 import time
 from collections import defaultdict
 

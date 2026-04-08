@@ -1,7 +1,6 @@
 """Deployment service — save HTML files to deployed/ directory."""
 
 import io
-import os
 import logging
 import zipfile
 from pathlib import Path

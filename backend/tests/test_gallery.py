@@ -1,8 +1,8 @@
 """Tests for routers/gallery.py."""
 
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
-from sqlmodel import Session
 
 from models import Build
 
@@ -21,21 +21,21 @@ class TestGalleryEndpoints:
         """Test gallery endpoint returns deployed builds."""
         import uuid
         unique = str(uuid.uuid4())[:8]
-        
+
         # Create some builds with unique identifiers
         build1 = Build(
             prompt=f"First app {unique}",
             status="deployed",
             app_name=f"App1-{unique}",
             deploy_url=f"/apps/build1-{unique}/",
-            deployed_at=datetime.now(timezone.utc),
+            deployed_at=datetime.now(UTC),
         )
         build2 = Build(
             prompt=f"Second app {unique}",
-            status="deployed", 
+            status="deployed",
             app_name=f"App2-{unique}",
             deploy_url=f"/apps/build2-{unique}/",
-            deployed_at=datetime.now(timezone.utc),
+            deployed_at=datetime.now(UTC),
         )
         build3 = Build(
             prompt=f"Failed app {unique}",
@@ -44,11 +44,11 @@ class TestGalleryEndpoints:
         )
         db_session.add_all([build1, build2, build3])
         db_session.commit()
-        
+
         resp = await client.get("/api/gallery")
         assert resp.status_code == 200
         data = resp.json()
-        
+
         # Find our specific builds
         app_names = [b["app_name"] for b in data]
         assert f"App1-{unique}" in app_names
@@ -65,15 +65,15 @@ class TestGalleryEndpoints:
                 status="deployed",
                 app_name=f"App{i}",
                 deploy_url=f"/apps/build{i}/",
-                deployed_at=datetime.now(timezone.utc),
+                deployed_at=datetime.now(UTC),
             )
             db_session.add(build)
         db_session.commit()
-        
+
         resp = await client.get("/api/gallery?limit=10")
         assert resp.status_code == 200
         data = resp.json()
-        
+
         # Should limit to 10
         assert len(data) == 10
 
@@ -83,21 +83,21 @@ class TestGalleryEndpoints:
         # Use unique identifiers to avoid conflicts with other tests
         import uuid
         unique = str(uuid.uuid4())[:8]
-        
+
         build1 = Build(prompt=f"Pending-{unique}", status="pending")
         build2 = Build(prompt=f"Coding-{unique}", status="coding")
         build3 = Build(
-            prompt=f"Deployed-{unique}", 
-            status="deployed", 
+            prompt=f"Deployed-{unique}",
+            status="deployed",
             deploy_url="/apps/x/",
-            deployed_at=datetime.now(timezone.utc),
+            deployed_at=datetime.now(UTC),
         )
         db_session.add_all([build1, build2, build3])
         db_session.commit()
-        
+
         resp = await client.get("/api/gallery")
         data = resp.json()
-        
+
         # Find our specific build
         deployed = [b for b in data if b.get("deploy_url") == "/apps/x/"]
         assert len(deployed) == 1
@@ -111,13 +111,13 @@ class TestGalleryEndpoints:
             app_name="DetailApp",
             generated_code="<html>Detail</html>",
             deploy_url="/apps/detail/",
-            deployed_at=datetime.now(timezone.utc),
+            deployed_at=datetime.now(UTC),
         )
         db_session.add(build)
         db_session.commit()
         db_session.refresh(build)
         build_id = build.id
-        
+
         resp = await client.get(f"/api/gallery/{build_id}")
         assert resp.status_code == 200
         data = resp.json()
