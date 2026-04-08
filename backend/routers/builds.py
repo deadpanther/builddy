@@ -615,6 +615,64 @@ async def delete_build(build_id: str, session: Session = Depends(get_session)):
     return {"status": "deleted", "build_id": build_id}
 
 
+@router.post("/{build_id}/generate-tests")
+async def generate_tests_for_build(build_id: str, session: Session = Depends(get_session)):
+    """Generate a test suite for a deployed build using the AI Test Generator agent."""
+    build = session.get(Build, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Build not found")
+    if build.status != "deployed":
+        raise HTTPException(status_code=400, detail="Build must be deployed first")
+    if not build.generated_code and not build.generated_files:
+        raise HTTPException(status_code=400, detail="No generated code to test")
+
+    from agent.test_gen import generate_tests
+
+    all_files = json.loads(build.generated_files) if build.generated_files else None
+    manifest = json.loads(build.file_manifest) if build.file_manifest else None
+
+    test_files = await generate_tests(
+        code=build.generated_code or "",
+        app_name=build.app_name or "App",
+        complexity=build.complexity or "simple",
+        manifest=manifest,
+        all_files=all_files,
+    )
+
+    if not test_files:
+        raise HTTPException(status_code=500, detail="Test generation failed")
+
+    # Merge test files into the build's generated files
+    if build.generated_files:
+        files = json.loads(build.generated_files)
+        files.update(test_files)
+        build.generated_files = json.dumps(files)
+    else:
+        build.generated_files = json.dumps(test_files)
+
+    build.updated_at = datetime.now(timezone.utc)
+    session.add(build)
+    session.commit()
+
+    # Redeploy with test files included
+    from services.deployer import deploy_html, deploy_project
+
+    if build.complexity in ("standard", "fullstack"):
+        files = json.loads(build.generated_files)
+        deploy_project(build_id, files)
+    elif "tests.html" in test_files:
+        # For simple apps, also deploy the test file alongside index.html
+        from services.deployer import DEPLOYED_DIR
+        test_path = DEPLOYED_DIR / build_id / "tests.html"
+        test_path.write_text(test_files["tests.html"], encoding="utf-8")
+
+    return {
+        "status": "generated",
+        "test_files": list(test_files.keys()),
+        "test_count": len(test_files),
+    }
+
+
 async def _run_build_pipeline(build_id: str):
     """Run the agent pipeline in background."""
     try:

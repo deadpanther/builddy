@@ -39,7 +39,27 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync
+      - run: uv run ruff check .
       - run: uv run python -m py_compile main.py
       - run: uv run python -m py_compile agent/pipeline.py
       - run: uv run python -m py_compile agent/llm.py
       - run: uv run python -m py_compile routers/builds.py
+
+  security:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Python SAST with Bandit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install bandit
+      - run: bandit -r backend/ -ll -ii --skip B101,B603,B607 || true
+
+      # npm audit for frontend
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: cd frontend && npm ci --legacy-peer-deps && npm audit --audit-level=high || true

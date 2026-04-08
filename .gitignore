@@ -38,3 +38,19 @@ Thumbs.db
 npm-debug.log*
 backend/.twitter_browser_state/
 frontend/tsconfig.tsbuildinfo
+
+# Coverage reports
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+
+# pytest
+.pytest_cache/
+
+# ruff
+.ruff_cache/
+
+# Build artifacts
+*.egg-info/
+build/
