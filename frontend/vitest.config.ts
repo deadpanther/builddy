@@ -8,6 +8,26 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     globals: true,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json", "html"],
+      exclude: [
+        "node_modules/",
+        "src/test/",
+        "**/*.d.ts",
+        "**/*.config.*",
+        "**/types.ts",
+        "src/app/**", // Next.js app router files
+      ],
+      thresholds: {
+        global: {
+          lines: 70,
+          functions: 70,
+          branches: 70,
+          statements: 70,
+        },
+      },
+    },
   },
   resolve: {
     alias: {

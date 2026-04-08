@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from typing import Callable
 
 from agent.llm import chat_with_reasoning, vision_chat, chat
 from agent.prompts import AUTOPILOT_FIX_SYSTEM, VISUAL_FIX_SYSTEM
@@ -14,7 +15,7 @@ MAX_AUTOPILOT_ITERATIONS = 3
 
 async def autopilot_fix_loop(
     code: str,
-    on_iteration: callable | None = None,
+    on_iteration: Callable | None = None,
 ) -> tuple[str, int]:
     """Run the app in a headless browser, detect errors, fix them, repeat.
 
