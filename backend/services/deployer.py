@@ -37,6 +37,23 @@ def get_deployed_html(build_id: str) -> str | None:
     return None
 
 
+def deploy_test_file(build_id: str, test_file_path: str, test_content: str) -> str:
+    """Deploy a test file alongside the app and return the URL path."""
+    ensure_deployed_dir()
+    app_dir = DEPLOYED_DIR / build_id
+    app_dir.mkdir(parents=True, exist_ok=True)
+
+    # For simple apps, tests.html goes at root
+    # For fullstack apps, preserve the path structure
+    dest = app_dir / test_file_path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(test_content, encoding="utf-8")
+
+    url = f"/apps/{build_id}/{test_file_path}"
+    logger.info("Deployed test file for build %s to %s", build_id, url)
+    return url
+
+
 def deploy_project(build_id: str, files: dict[str, str]) -> str:
     """Write all project files to deployed/{build_id}/ and return the URL path.
 
