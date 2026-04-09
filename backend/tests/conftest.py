@@ -72,22 +72,16 @@ def _create_tables():
 
 
 def _reset_slowapi_limiters() -> None:
-    """Clear rate-limit counters so tests do not share one 127.0.0.1 bucket.
+    """Clear rate-limit counters so tests do not share one 127.0.0.1 bucket."""
+    from rate_limiter import limiter as lim
 
-    Builds routes use ``routers.builds.limiter``; ``main.limiter`` is a separate
-    instance. Resetting only one caused flaky failures when the full suite ran.
-    """
-    import main as main_mod
-    import routers.builds as builds_mod
-
-    for lim in (main_mod.limiter, builds_mod.limiter):
+    try:
+        lim.reset()
+    except Exception:
         try:
-            lim.reset()
+            lim._storage.reset()
         except Exception:
-            try:
-                lim._storage.reset()
-            except Exception:
-                pass
+            pass
 
 
 @pytest.fixture(autouse=True)

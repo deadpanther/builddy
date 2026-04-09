@@ -2,9 +2,9 @@
 
 ## Overview
 
-- **447 tests** across 11 test files
-- **80% code coverage**
-- Runtime: ~75 seconds (full suite)
+- **449 tests** across 13+ test files
+- **80% code coverage** (enforced in CI via `--cov-fail-under=80`)
+- Runtime: ~80 seconds (full suite)
 - Framework: pytest + pytest-asyncio + httpx (AsyncClient)
 
 ## Quick Start
@@ -20,9 +20,6 @@ uv run pytest tests/ --cov=. --cov-report=term-missing
 
 # Run a single test file
 uv run pytest tests/test_builds_endpoints.py -v
-
-# Skip flaky rate-limiting tests
-uv run pytest tests/ --ignore=tests/test_rate_limiting.py
 ```
 
 ## Test Files
@@ -31,12 +28,14 @@ uv run pytest tests/ --ignore=tests/test_rate_limiting.py
 |------|-------|---------------|
 | `test_builds_endpoints.py` | ~30 | Build CRUD, modify, remix, deploy, download, retry, delete, chain, files |
 | `test_builds_extra.py` | ~10 | List builds, cloud deploy status, chain traversal, get/create build |
-| `test_prompts_router.py` | ~15 | Prompt versions CRUD, experiments, assignments, record-result |
+| `test_prompts_router.py` | ~28 | Prompt versions CRUD, experiments, assignments, record-result |
 | `test_llm_coverage.py` | ~15 | Chat, streaming, vision, image gen, rate-limit retry, model fallback |
 | `test_cloud_deploy_coverage.py` | ~10 | deploy_to_cloud, get_deploy_status, manual instructions |
 | `test_test_gen.py` | ~20 | _extract_code, generate_tests, fullstack test generation, fallbacks |
 | `test_autopilot.py` | ~15 | autopilot_fix_loop, _attempt_fix (vision/text/fast), _strip_fences |
-| `test_rate_limiting.py` | ~5 | Rate limit enforcement (flaky - cross-test contamination) |
+| `test_rate_limiting.py` | ~2 | Rate limit enforcement on `POST /api/builds` |
+| `test_multifile_classify.py` | ~1 | classify_complexity JSON fallback |
+| `test_screenshot_pipeline_autopilot.py` | ~1 | Screenshot pipeline calls autopilot when enabled |
 
 ## Key Patterns
 
@@ -93,16 +92,17 @@ def mock_pipeline():
         yield
 ```
 
+### Rate limiting
+
+[`rate_limiter.py`](../backend/rate_limiter.py) exposes a single shared SlowAPI `Limiter`. [`tests/conftest.py`](../backend/tests/conftest.py) resets it before each test so the suite does not exhaust the per-IP bucket.
+
 ### Lazy Imports
 
-Many services use lazy imports inside functions. Patch at the source module:
+Many services use lazy imports inside functions. Patch at the module where the name is resolved:
 
 ```python
-# Wrong:
-patch("agent.pipeline.deploy_html", ...)
-
-# Right:
-patch("services.deployer.deploy_html", ...)
+# Patch where the callee looks up the symbol, e.g. agent.pipeline for pipeline code:
+patch("agent.pipeline.vision_chat", ...)
 ```
 
 ## Adding New Tests
@@ -115,10 +115,6 @@ patch("services.deployer.deploy_html", ...)
 
 ## Coverage Requirements
 
-- Target: 80%+ overall coverage
+- Target: 80%+ overall coverage (CI enforces `--cov-fail-under=80`)
 - Check: `uv run pytest tests/ --cov=. --cov-report=term-missing`
 - Focus on uncovered lines shown in the `term-missing` report
-
-## Known Issues
-
-- `test_rate_limiting.py` has cross-test contamination from Slowapi state -- run in isolation or skip

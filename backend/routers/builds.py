@@ -7,15 +7,10 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from pydantic import BaseModel, ConfigDict
 from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
 
-from database import get_session
-
-limiter = Limiter(key_func=get_remote_address)
 from agent.pipeline import (
     run_modify_fullstack_pipeline,
     run_modify_pipeline,
@@ -23,7 +18,9 @@ from agent.pipeline import (
     run_retry_pipeline,
     run_screenshot_pipeline,
 )
+from database import get_session
 from models import Build
+from rate_limiter import limiter
 from services.event_bus import subscribe, unsubscribe
 
 logger = logging.getLogger(__name__)
@@ -84,8 +81,7 @@ class BuildResponse(BaseModel):
     updated_at: datetime
     deployed_at: datetime | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.post("", response_model=BuildResponse)

@@ -1,6 +1,7 @@
 # Builddy
 
-[![](https://img.shields.io/badge/tests-447-brightgreen)]()
+[![CI](https://github.com/deadpanther/builddy/actions/workflows/ci.yml/badge.svg)](https://github.com/deadpanther/builddy/actions/workflows/ci.yml)
+[![](https://img.shields.io/badge/tests-449-brightgreen)]()
 [![](https://img.shields.io/badge/coverage-80%25-green)]()
 [![](https://img.shields.io/badge/license-MIT-blue)]()
 [![](https://img.shields.io/badge/GLM-5.1-purple)]()
@@ -27,7 +28,7 @@ Built for the **Z.ai Build with GLM 5.1 Challenge**.
 - **Code Autopsy** -- Feed a GitHub repo URL, get a forensic "death certificate" analysis
 - **Real-time streaming** -- SSE-based pipeline visualization as your app is built
 - **Gallery** -- Browse and remix all deployed apps
-- **447 tests, 80% coverage** -- Production-quality backend
+- **449 tests, 80% coverage** -- Production-quality backend
 
 ---
 
@@ -127,9 +128,13 @@ echo "GLM_API_KEY=your_key_here" > .env
 docker compose up --build
 ```
 
-### Option C: Railway One-Click
+### Option C: Railway
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/builddy)
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/github)
+
+Connect the **deadpanther/builddy** GitHub repository in Railway. The repo root [`railway.toml`](railway.toml) configures the backend Dockerfile and health check. Set `GLM_API_KEY` (and optional cloud tokens) in the service variables.
+
+To publish a reusable template URL later, create a template in the [Railway dashboard](https://railway.app) and replace this link.
 
 ---
 
@@ -263,7 +268,7 @@ builddy/
 |   +-- models.py            # SQLModel schemas
 |   +-- database.py          # SQLite setup
 |   +-- config.py            # Pydantic settings (.env)
-|   +-- tests/               # 447 tests, 80% coverage
+|   +-- tests/               # 449 tests, 80% coverage
 |   +-- Dockerfile
 |   +-- pyproject.toml
 |
@@ -293,12 +298,9 @@ uv run pytest tests/ -q
 
 # Run with coverage
 uv run pytest tests/ --cov=. --cov-report=term-missing
-
-# Skip flaky rate-limiting tests
-uv run pytest tests/ --ignore=tests/test_rate_limiting.py
 ```
 
-**447 tests | 80% coverage | ~75s runtime**
+**449 tests | 80% coverage | ~80s runtime**
 
 ---
 

@@ -33,7 +33,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "F841", "SIM105", "SIM117", "S110", "SIM115", "SIM118"]  # allow various patterns in tests
 "tests/test_cloud_deploy_coverage.py" = ["S105"]  # mock API tokens trigger hardcoded-secret heuristic
-"routers/builds.py" = ["E402", "S110"]  # imports after limiter init, silent except
+"routers/builds.py" = ["S110"]  # silent except
 "services/cloud_deploy.py" = ["SIM108", "F841"]  # ternary preference, unused var
 "services/event_bus.py" = ["SIM105"]  # contextlib.suppress preference
 "services/process_manager.py" = ["SIM105", "B904"]  # contextlib.suppress, raise from

@@ -97,12 +97,11 @@ environment:
 
 ## Railway Deployment
 
-### Option 1: One-Click Deploy
+### Option 1: Deploy from GitHub
 
-Click the "Deploy on Railway" button in the README. Railway will:
-1. Fork the repo
-2. Detect the Dockerfile in `backend/`
-3. Build and deploy automatically
+Use the README **Deploy on Railway** button (opens [railway.app/new/github](https://railway.app/new/github)), connect GitHub, and select **deadpanther/builddy**. The repository root [`railway.toml`](../railway.toml) points Railway at `backend/Dockerfile` and `/api/health`. Set `GLM_API_KEY` in the service variables.
+
+You can later publish a reusable template in the Railway dashboard and link it from the README if you want a fixed template URL.
 
 ### Option 2: Manual Setup
 

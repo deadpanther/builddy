@@ -1,4 +1,4 @@
-"""Buildy Backend — FastAPI app entry point."""
+"""Builddy Backend — FastAPI app entry point."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -9,12 +9,12 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from config import settings
 from database import create_db_and_tables
+from rate_limiter import limiter
 from routers import builds, gallery, prompts, twitter
 from routers.twitter import start_twitter_poll, stop_twitter_poll
 from services.deployer import ensure_deployed_dir
@@ -33,7 +33,7 @@ logging.getLogger("services.twitter").setLevel(logging.CRITICAL)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle."""
-    logger.info("Buildy starting up...")
+    logger.info("Builddy starting up...")
     create_db_and_tables()
     ensure_deployed_dir()
     await process_manager.start_cleanup_loop()
@@ -45,13 +45,11 @@ async def lifespan(app: FastAPI):
         logger.info("Twitter scraper disabled via ENABLE_TWITTER_SCRAPER=false")
     logger.info("Database tables created, deployed dir ready")
     yield
-    logger.info("Buildy shutting down...")
+    logger.info("Builddy shutting down...")
     twitter_scraper.stop()
     await stop_twitter_poll()
     await process_manager.stop_all()
 
-
-limiter = Limiter(key_func=get_remote_address)
 
 tags_metadata = [
     {
@@ -108,7 +106,7 @@ app = FastAPI(
     version="1.0.0",
     contact={
         "name": "Builddy",
-        "url": "https://github.com/builddy",
+        "url": "https://github.com/deadpanther/builddy",
     },
     license_info={
         "name": "MIT",
@@ -149,7 +147,7 @@ app.include_router(prompts.router)
     },
 )
 async def health():
-    return {"status": "ok", "service": "buildy", "version": "1.0.0"}
+    return {"status": "ok", "service": "builddy", "version": "1.0.0"}
 
 
 # ---------------------------------------------------------------------------

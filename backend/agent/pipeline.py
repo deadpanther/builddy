@@ -655,13 +655,31 @@ async def run_screenshot_pipeline(build_id: str, images_base64: list[str], text_
         # Step 2: Review
         code = await review_code(build_id, code)
 
+        app_name_desc = text_prompt or "Screenshot App"
+
+        # Autopilot (parity with text/simple pipeline)
+        if settings.ENABLE_AUTOPILOT:
+            _add_step(build_id, "Running autopilot error detection...")
+
+            def _on_autopilot_iteration(iteration: int, errors_found: int, screenshot_available: bool):
+                if errors_found > 0:
+                    _add_step(build_id, f"Autopilot iteration {iteration}: {errors_found} error(s) found, fixing...")
+                else:
+                    _add_step(build_id, f"Autopilot iteration {iteration}: No errors detected")
+
+            fixed_code, iterations = await autopilot_fix_loop(code, on_iteration=_on_autopilot_iteration)
+            if iterations > 0:
+                code = fixed_code
+                _add_step(build_id, f"Autopilot completed after {iterations} iteration(s)")
+        else:
+            _add_step(build_id, "Autopilot skipped (disabled)")
+
         # Step 3: Deploy
         _update_build(build_id, status="deploying")
         _add_step(build_id, "Deploying app...")
         deploy_url = deploy_html(build_id, code)
 
         # Generate test suite (non-blocking)
-        app_name_desc = text_prompt or "Screenshot App"
 
         if settings.ENABLE_AUTO_TEST_GEN:
             async def _generate_screenshot_tests():

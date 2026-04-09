@@ -8,7 +8,7 @@ on:
 
 jobs:
   frontend:
-    name: Frontend Lint & Build
+    name: Frontend Lint, Test & Build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -22,10 +22,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --legacy-peer-deps
       - run: npm run lint
+      - run: npm test
       - run: npm run build
 
   backend:
-    name: Backend Lint & Check
+    name: Backend Lint, Test & Check
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,10 +41,28 @@ jobs:
           python-version: "3.12"
       - run: uv sync
       - run: uv run ruff check .
-      - run: uv run python -m py_compile main.py
+      - run: uv run pytest -q --cov=. --cov-report=term-missing --cov-fail-under=80
+      - run: uv run python -m py_compile main.py rate_limiter.py
       - run: uv run python -m py_compile agent/pipeline.py
       - run: uv run python -m py_compile agent/llm.py
       - run: uv run python -m py_compile routers/builds.py
+
+  autopsy-backend:
+    name: Autopsy Backend Compile Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: autopsy-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      - run: uv run python -m py_compile main.py
 
   security:
     name: Security Scanning
@@ -51,15 +70,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Python SAST with Bandit
+      # Python SAST: exclude venv/tests/deployed artifacts; skip known intentional patterns
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install bandit
-      - run: bandit -r backend/ -ll -ii --skip B101,B603,B607 || true
+      - name: Bandit (medium+ severity)
+        run: >
+          bandit -r backend -ll -ii
+          --skip B101,B603,B607,B104
+          -x backend/.venv,backend/tests,backend/deployed
 
-      # npm audit for frontend
+      # Fail only on critical npm vulnerabilities (high/moderate tracked separately)
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: cd frontend && npm ci --legacy-peer-deps && npm audit --audit-level=high || true
+      - run: cd frontend && npm ci --legacy-peer-deps && npm audit --audit-level=critical

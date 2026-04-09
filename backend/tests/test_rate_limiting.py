@@ -8,7 +8,7 @@ class TestCreateBuildRateLimit:
     @pytest.fixture(autouse=True)
     def reset_limiter(self):
         """Reset the rate limiter storage before each test to avoid cross-test contamination."""
-        from main import limiter
+        from rate_limiter import limiter
         try:
             limiter.reset()
         except Exception:

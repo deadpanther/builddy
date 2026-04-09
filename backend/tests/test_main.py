@@ -14,7 +14,7 @@ class TestHealthEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
-        assert data["service"] == "buildy"
+        assert data["service"] == "builddy"
 
     @pytest.mark.asyncio
     async def test_health_has_version(self, client):
