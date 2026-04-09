@@ -1,6 +1,5 @@
 """Tests for agent/test_gen.py — covering _generate_simple_tests, _generate_fullstack_tests, _extract_code."""
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest

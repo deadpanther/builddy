@@ -1,6 +1,6 @@
 """Tests for services/cloud_deploy.py — cloud deployment functions."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

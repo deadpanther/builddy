@@ -2,15 +2,15 @@
 
 import json
 import math
+import secrets
 from datetime import UTC, datetime
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from models import PromptVersion, PromptExperiment, ExperimentAssignment, Build
 from database import get_session
+from models import ExperimentAssignment, PromptExperiment, PromptVersion
 
 router = APIRouter(prefix="/api/prompts", tags=["Prompts"])
 
@@ -21,22 +21,22 @@ class PromptVersionCreate(BaseModel):
     name: str
     prompt: str
     prompt_type: str = "system"
-    parent_version_id: Optional[str] = None
-    tags: Optional[list[str]] = None
-    notes: Optional[str] = None
+    parent_version_id: str | None = None
+    tags: list[str] | None = None
+    notes: str | None = None
 
 
 class PromptVersionUpdate(BaseModel):
-    name: Optional[str] = None
-    prompt: Optional[str] = None
-    tags: Optional[list[str]] = None
-    notes: Optional[str] = None
-    is_active: Optional[bool] = None
+    name: str | None = None
+    prompt: str | None = None
+    tags: list[str] | None = None
+    notes: str | None = None
+    is_active: bool | None = None
 
 
 class PromptExperimentCreate(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     prompt_type: str = "system"
     control_prompt_id: str
     variant_prompt_id: str
@@ -44,18 +44,18 @@ class PromptExperimentCreate(BaseModel):
 
 
 class PromptExperimentUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    variant_traffic_percent: Optional[int] = None
-    status: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
+    variant_traffic_percent: int | None = None
+    status: str | None = None
 
 
 # ── Prompt Versions ───────────────────────────────────────────────────────────
 
 @router.get("/versions")
 def list_prompt_versions(
-    prompt_type: Optional[str] = None,
-    is_active: Optional[bool] = None,
+    prompt_type: str | None = None,
+    is_active: bool | None = None,
     limit: int = 50,
     session: Session = Depends(get_session),
 ):
@@ -168,7 +168,7 @@ def delete_prompt_version(version_id: str, session: Session = Depends(get_sessio
 
 @router.get("/experiments")
 def list_experiments(
-    status: Optional[str] = None,
+    status: str | None = None,
     limit: int = 50,
     session: Session = Depends(get_session),
 ):
@@ -378,11 +378,11 @@ def assign_experiment(
         return {"experiment_id": None, "prompt_id": None, "variant": None}
 
     # Pick one experiment (could be weighted by traffic)
-    import random
-    experiment = random.choice(experiments)
+    experiment = secrets.choice(experiments)
 
-    # Determine variant
-    variant = "variant" if random.randint(1, 100) <= experiment.variant_traffic_percent else "control"
+    # Determine variant (uniform 1–100 via cryptographically strong RNG)
+    roll = secrets.randbelow(100) + 1
+    variant = "variant" if roll <= experiment.variant_traffic_percent else "control"
 
     return {
         "experiment_id": experiment.id,

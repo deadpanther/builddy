@@ -1,11 +1,8 @@
 """Tests for prompts router — CRUD versions, experiments, assignments."""
 
-import json
-from unittest.mock import patch
-
 import pytest
 
-from models import PromptVersion, PromptExperiment, ExperimentAssignment
+from models import ExperimentAssignment, PromptExperiment, PromptVersion
 
 
 def _make_version(**overrides):

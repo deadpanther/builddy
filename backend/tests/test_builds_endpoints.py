@@ -1,7 +1,7 @@
 """Tests for builds router endpoints — modify, remix, download, retry, delete, chain, files, cloud deploy."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

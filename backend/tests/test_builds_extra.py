@@ -1,7 +1,7 @@
 """Extra tests for builds router — covering SSE stream, cloud deploy status, list builds, and chain traversal."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

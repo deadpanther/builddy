@@ -1,6 +1,5 @@
 """Tests for agent/llm.py — streaming, vision, image gen, rate limit retry."""
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

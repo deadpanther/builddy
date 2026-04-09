@@ -1,6 +1,6 @@
 """Tests for agent/autopilot.py — covering the fix loop and _attempt_fix."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

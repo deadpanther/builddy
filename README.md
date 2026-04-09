@@ -1,6 +1,6 @@
 # Builddy
 
-[![](https://img.shields.io/badge/tests-445-brightgreen)]()
+[![](https://img.shields.io/badge/tests-447-brightgreen)]()
 [![](https://img.shields.io/badge/coverage-80%25-green)]()
 [![](https://img.shields.io/badge/license-MIT-blue)]()
 [![](https://img.shields.io/badge/GLM-5.1-purple)]()
@@ -27,7 +27,7 @@ Built for the **Z.ai Build with GLM 5.1 Challenge**.
 - **Code Autopsy** -- Feed a GitHub repo URL, get a forensic "death certificate" analysis
 - **Real-time streaming** -- SSE-based pipeline visualization as your app is built
 - **Gallery** -- Browse and remix all deployed apps
-- **445 tests, 80% coverage** -- Production-quality backend
+- **447 tests, 80% coverage** -- Production-quality backend
 
 ---
 
@@ -263,7 +263,7 @@ builddy/
 |   +-- models.py            # SQLModel schemas
 |   +-- database.py          # SQLite setup
 |   +-- config.py            # Pydantic settings (.env)
-|   +-- tests/               # 445 tests, 80% coverage
+|   +-- tests/               # 447 tests, 80% coverage
 |   +-- Dockerfile
 |   +-- pyproject.toml
 |
@@ -298,7 +298,7 @@ uv run pytest tests/ --cov=. --cov-report=term-missing
 uv run pytest tests/ --ignore=tests/test_rate_limiting.py
 ```
 
-**445 tests | 80% coverage | ~75s runtime**
+**447 tests | 80% coverage | ~75s runtime**
 
 ---
 

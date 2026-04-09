@@ -2,7 +2,7 @@
 
 ## Overview
 
-- **445 tests** across 11 test files
+- **447 tests** across 11 test files
 - **80% code coverage**
 - Runtime: ~75 seconds (full suite)
 - Framework: pytest + pytest-asyncio + httpx (AsyncClient)
