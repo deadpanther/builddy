@@ -1,0 +1,25 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+startCommand = "uv run uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+
+[[build.env]]
+name = "GLM_API_KEY"
+description = "GLM API key from open.bigmodel.cn"
+
+[[build.env]]
+name = "GLM_MODEL"
+description = "Primary GLM model (default: glm-5.1)"
+
+[[build.env]]
+name = "ENABLE_AUTOPILOT"
+description = "Enable autopilot error recovery (default: true)"
+
+[[build.env]]
+name = "ENABLE_AUTO_TEST_GEN"
+description = "Enable auto test generation (default: true)"

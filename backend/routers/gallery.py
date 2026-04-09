@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from database import get_session
 from models import Build
 
-router = APIRouter(prefix="/api/gallery", tags=["gallery"])
+router = APIRouter(prefix="/api/gallery", tags=["Gallery"])
 
 
 @router.get("")

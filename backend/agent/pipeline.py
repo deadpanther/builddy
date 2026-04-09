@@ -107,22 +107,25 @@ async def run_fullstack_pipeline(build_id: str, prompt: str, classification: dic
     app_name = manifest.get("app_name", "App")
     main_html = all_files.get("frontend/index.html", "")
 
-    async def _generate_and_deploy_fullstack_tests():
-        try:
-            tests = await generate_tests(
-                main_html,
-                app_name=app_name,
-                complexity=classification.get("complexity", "standard"),
-                manifest=manifest,
-                all_files=all_files,
-            )
-            for test_path, test_content in tests.items():
-                test_url = deploy_test_file(build_id, test_path, test_content)
-                _add_step(build_id, f"Test file deployed at {test_url}")
-        except Exception as e:
-            logger.warning("Test generation failed for fullstack build %s: %s", build_id, e)
+    if settings.ENABLE_AUTO_TEST_GEN:
+        async def _generate_and_deploy_fullstack_tests():
+            try:
+                tests = await generate_tests(
+                    main_html,
+                    app_name=app_name,
+                    complexity=classification.get("complexity", "standard"),
+                    manifest=manifest,
+                    all_files=all_files,
+                )
+                for test_path, test_content in tests.items():
+                    test_url = deploy_test_file(build_id, test_path, test_content)
+                    _add_step(build_id, f"Test file deployed at {test_url}")
+            except Exception as e:
+                logger.warning("Test generation failed for fullstack build %s: %s", build_id, e)
 
-    asyncio.create_task(_generate_and_deploy_fullstack_tests())
+        asyncio.create_task(_generate_and_deploy_fullstack_tests())
+    else:
+        logger.info("Test generation skipped for fullstack build %s (disabled)", build_id)
 
     # Step 7: Create downloadable zip
     _add_step(build_id, "Creating downloadable project zip...")
@@ -546,19 +549,23 @@ async def run_pipeline(build_id: str):
             code = await visual_validate(build_id, code)
 
             # Autopilot: Run in headless browser, detect errors, auto-fix
-            _add_step(build_id, "Running autopilot error detection...")
             app_name = parsed.get("app_name", "App")
 
-            def _on_autopilot_iteration(iteration: int, errors_found: int, screenshot_available: bool):
-                if errors_found > 0:
-                    _add_step(build_id, f"Autopilot iteration {iteration}: {errors_found} error(s) found, fixing...")
-                else:
-                    _add_step(build_id, f"Autopilot iteration {iteration}: No errors detected")
+            if settings.ENABLE_AUTOPILOT:
+                _add_step(build_id, "Running autopilot error detection...")
 
-            fixed_code, iterations = await autopilot_fix_loop(code, on_iteration=_on_autopilot_iteration)
-            if iterations > 0:
-                code = fixed_code
-                _add_step(build_id, f"Autopilot completed after {iterations} iteration(s)")
+                def _on_autopilot_iteration(iteration: int, errors_found: int, screenshot_available: bool):
+                    if errors_found > 0:
+                        _add_step(build_id, f"Autopilot iteration {iteration}: {errors_found} error(s) found, fixing...")
+                    else:
+                        _add_step(build_id, f"Autopilot iteration {iteration}: No errors detected")
+
+                fixed_code, iterations = await autopilot_fix_loop(code, on_iteration=_on_autopilot_iteration)
+                if iterations > 0:
+                    code = fixed_code
+                    _add_step(build_id, f"Autopilot completed after {iterations} iteration(s)")
+            else:
+                _add_step(build_id, "Autopilot skipped (disabled)")
 
             # Deploy
             _update_build(build_id, status="deploying")
@@ -566,16 +573,19 @@ async def run_pipeline(build_id: str):
             deploy_url = deploy_html(build_id, code)
 
             # Generate test suite (non-blocking for simple apps)
-            async def _generate_and_deploy_tests():
-                try:
-                    tests = await generate_tests(code, app_name=app_name)
-                    for test_path, test_content in tests.items():
-                        test_url = deploy_test_file(build_id, test_path, test_content)
-                        _add_step(build_id, f"Test suite deployed at {test_url}")
-                except Exception as e:
-                    logger.warning("Test generation failed for build %s: %s", build_id, e)
+            if settings.ENABLE_AUTO_TEST_GEN:
+                async def _generate_and_deploy_tests():
+                    try:
+                        tests = await generate_tests(code, app_name=app_name)
+                        for test_path, test_content in tests.items():
+                            test_url = deploy_test_file(build_id, test_path, test_content)
+                            _add_step(build_id, f"Test suite deployed at {test_url}")
+                    except Exception as e:
+                        logger.warning("Test generation failed for build %s: %s", build_id, e)
 
-            asyncio.create_task(_generate_and_deploy_tests())
+                asyncio.create_task(_generate_and_deploy_tests())
+            else:
+                logger.info("Test generation skipped for build %s (disabled)", build_id)
 
             _update_build(
                 build_id,
@@ -653,16 +663,19 @@ async def run_screenshot_pipeline(build_id: str, images_base64: list[str], text_
         # Generate test suite (non-blocking)
         app_name_desc = text_prompt or "Screenshot App"
 
-        async def _generate_screenshot_tests():
-            try:
-                tests = await generate_tests(code, app_name=app_name_desc)
-                for test_path, test_content in tests.items():
-                    test_url = deploy_test_file(build_id, test_path, test_content)
-                    _add_step(build_id, f"Test suite deployed at {test_url}")
-            except Exception as e:
-                logger.warning("Test generation failed for screenshot build %s: %s", build_id, e)
+        if settings.ENABLE_AUTO_TEST_GEN:
+            async def _generate_screenshot_tests():
+                try:
+                    tests = await generate_tests(code, app_name=app_name_desc)
+                    for test_path, test_content in tests.items():
+                        test_url = deploy_test_file(build_id, test_path, test_content)
+                        _add_step(build_id, f"Test suite deployed at {test_url}")
+                except Exception as e:
+                    logger.warning("Test generation failed for screenshot build %s: %s", build_id, e)
 
-        asyncio.create_task(_generate_screenshot_tests())
+            asyncio.create_task(_generate_screenshot_tests())
+        else:
+            logger.info("Test generation skipped for screenshot build %s (disabled)", build_id)
 
         _update_build(
             build_id,

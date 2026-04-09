@@ -15,7 +15,7 @@ from slowapi.util import get_remote_address
 
 from config import settings
 from database import create_db_and_tables
-from routers import builds, gallery, twitter
+from routers import builds, gallery, prompts, twitter
 from routers.twitter import start_twitter_poll, stop_twitter_poll
 from services.deployer import ensure_deployed_dir
 from services.process_manager import process_manager
@@ -53,10 +53,67 @@ async def lifespan(app: FastAPI):
 
 limiter = Limiter(key_func=get_remote_address)
 
+tags_metadata = [
+    {
+        "name": "Health",
+        "description": "Service health checks and diagnostics.",
+    },
+    {
+        "name": "Builds",
+        "description": "Create, read, modify, deploy, and manage app builds. "
+        "Supports text-to-app, screenshot-to-app, remix, cloud deploy, and more.",
+    },
+    {
+        "name": "Gallery",
+        "description": "Public gallery of deployed apps. Browse and discover apps built by the community.",
+    },
+    {
+        "name": "Twitter",
+        "description": "Twitter integration — mention polling, scraper ingestion, and auto-reply. "
+        "Builddy watches for Twitter mentions and automatically builds apps from them.",
+    },
+    {
+        "name": "Prompts",
+        "description": "Prompt version control and A/B testing. Manage prompt versions, "
+        "run experiments to compare prompt effectiveness, and track success metrics.",
+    },
+    {
+        "name": "Proxy",
+        "description": "Reverse proxy for running app backends. Forwards API requests to "
+        "the live Express process of a deployed build.",
+    },
+]
+
 app = FastAPI(
-    title="Buildy",
-    description="AI-powered app builder that turns tweets into deployed web apps",
+    title="Builddy",
+    description=(
+        "# Builddy API\n\n"
+        "AI-powered app builder that turns natural-language prompts and tweets into "
+        "deployed web apps in minutes.\n\n"
+        "## Quick Start\n"
+        "1. **Create a build** — `POST /api/builds` with a text prompt, or "
+        "`POST /api/builds/from-image` with a screenshot.\n"
+        "2. **Stream progress** — `GET /api/builds/{id}/stream` (SSE) for real-time status.\n"
+        "3. **View the app** — Once deployed, the app is served at `/apps/{id}/`.\n"
+        "4. **Iterate** — Modify, remix, retry, or cloud-deploy your build.\n\n"
+        "## Features\n"
+        "- Text-to-app and screenshot-to-app pipelines\n"
+        "- Real-time SSE streaming of build progress\n"
+        "- Multi-file fullstack builds with auto-deploy\n"
+        "- Cloud deployment to Railway or Render\n"
+        "- Twitter bot integration (mention → build → reply)\n"
+        "- Prompt version control & A/B testing\n"
+        "- Gallery of deployed apps\n"
+    ),
     version="1.0.0",
+    contact={
+        "name": "Builddy",
+        "url": "https://github.com/builddy",
+    },
+    license_info={
+        "name": "MIT",
+    },
+    openapi_tags=tags_metadata,
     lifespan=lifespan,
 )
 app.state.limiter = limiter
@@ -75,10 +132,22 @@ app.add_middleware(
 app.include_router(builds.router)
 app.include_router(twitter.router)
 app.include_router(gallery.router)
+app.include_router(prompts.router)
 
 
 # Health check
-@app.get("/api/health")
+@app.get(
+    "/api/health",
+    tags=["Health"],
+    summary="Health check",
+    description="Returns the service health status, name, and version. "
+    "Use this to verify the API is up and running.",
+    response_model=dict,
+    responses={
+        200: {"description": "Service is healthy"},
+        500: {"description": "Service is unhealthy"},
+    },
+)
 async def health():
     return {"status": "ok", "service": "buildy", "version": "1.0.0"}
 
@@ -91,6 +160,16 @@ async def health():
 @app.api_route(
     "/apps/{build_id}/api/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    tags=["Proxy"],
+    summary="Reverse proxy to app backend",
+    description="Forwards API requests to the running Express process for a deployed build. "
+    "Used when builds include a backend that needs its own API endpoints.",
+    responses={
+        200: {"description": "Request successfully proxied"},
+        502: {"description": "Proxy error — upstream server error"},
+        503: {"description": "App backend not available — process not running"},
+        504: {"description": "App backend timed out"},
+    },
 )
 async def proxy_app_api(build_id: str, path: str, request: Request):
     """Reverse proxy API requests to the running Express process for a build."""
@@ -141,7 +220,13 @@ async def proxy_app_api(build_id: str, path: str, request: Request):
         )
 
 
-@app.get("/api/processes")
+@app.get(
+    "/api/processes",
+    tags=["Health"],
+    summary="List running processes",
+    description="Returns a list of all currently running app preview processes (Express servers).",
+    response_model=dict,
+)
 async def list_processes():
     """List all running app preview processes."""
     return {"processes": process_manager.list_running()}
@@ -152,7 +237,17 @@ DEPLOYED_DIR = Path(__file__).parent / "deployed"
 DEPLOYED_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@app.get("/apps/{build_id}/thumbnail.png")
+@app.get(
+    "/apps/{build_id}/thumbnail.png",
+    tags=["Builds"],
+    summary="Get app thumbnail",
+    description="Serves the screenshot thumbnail image for a deployed build. "
+    "Returns a PNG image if available, or a 404 if no thumbnail exists.",
+    responses={
+        200: {"description": "PNG thumbnail image", "content": {"image/png": {}}},
+        404: {"description": "No thumbnail available for this build"},
+    },
+)
 async def get_thumbnail(build_id: str):
     """Serve the app screenshot thumbnail."""
     thumb = DEPLOYED_DIR / build_id / "thumbnail.png"

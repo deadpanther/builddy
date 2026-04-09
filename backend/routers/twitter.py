@@ -13,7 +13,7 @@ from services.twitter import post_reply, search_mentions, twitter_configured
 from services.twitter_scraper import scraper as twitter_scraper
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/twitter", tags=["twitter"])
+router = APIRouter(prefix="/api/twitter", tags=["Twitter"])
 
 # ---------------------------------------------------------------------------
 # Background polling state

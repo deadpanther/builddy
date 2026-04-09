@@ -54,3 +54,6 @@ coverage.xml
 # Build artifacts
 *.egg-info/
 build/
+
+# Hermes agent
+.hermes/

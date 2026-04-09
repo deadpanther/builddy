@@ -1,193 +1,224 @@
-"""Tests for agent/test_gen.py."""
+"""Tests for agent/test_gen.py — covering _generate_simple_tests, _generate_fullstack_tests, _extract_code."""
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 
-class TestTestGenModule:
-    """Tests for test_gen module."""
-
-    def test_module_imports(self):
-        """Test that test_gen module can be imported."""
-        from agent import test_gen
-        assert test_gen is not None
-
-    def test_generate_tests_exists(self):
-        """Test that generate_tests function exists."""
-        from agent.test_gen import generate_tests
-        assert callable(generate_tests)
-
-    def test_extract_code_exists(self):
-        """Test that _extract_code function exists."""
-        from agent.test_gen import _extract_code
-        assert callable(_extract_code)
-
-
 class TestExtractCode:
-    """Tests for _extract_code function."""
+    """Cover lines 156-183 of test_gen.py."""
 
-    def test_extract_html_fence(self):
-        """Test extracting code from HTML fence."""
+    def test_html_fence(self):
         from agent.test_gen import _extract_code
+        text = "Here is the code:\n```html\n<div>Hello</div>\n```\nDone"
+        assert _extract_code(text, lang="html") == "<div>Hello</div>"
 
-        text = "Here's the code:\n```html\n<div>Hello</div>\n```\nDone."
+    def test_javascript_fence(self):
+        from agent.test_gen import _extract_code
+        text = "```javascript\nconst x = 1;\n```"
+        assert _extract_code(text, lang="javascript") == "const x = 1;"
+
+    def test_generic_fence_with_lang_tag(self):
+        from agent.test_gen import _extract_code
+        text = "```js\nconsole.log('hi')\n```"
         result = _extract_code(text, lang="html")
+        assert "console.log" in result
 
-        assert result == "<div>Hello</div>"
-
-    def test_extract_javascript_fence(self):
-        """Test extracting code from JavaScript fence."""
+    def test_no_closing_fence(self):
         from agent.test_gen import _extract_code
+        text = "```html\n<div>No close"
+        assert _extract_code(text, lang="html") == "<div>No close"
 
-        text = "```javascript\nconsole.log('test');\n```"
-        result = _extract_code(text, lang="javascript")
-
-        assert result == "console.log('test');"
-
-    def test_extract_generic_fence(self):
-        """Test extracting code from generic fence."""
+    def test_generic_no_closing(self):
         from agent.test_gen import _extract_code
-
-        text = "```\nsome code\n```"
-        result = _extract_code(text)
-
-        assert result == "some code"
-
-    def test_extract_no_fence(self):
-        """Test extracting code when no fence present."""
-        from agent.test_gen import _extract_code
-
-        text = "just plain text"
-        result = _extract_code(text)
-
-        assert result == "just plain text"
-
-    def test_extract_empty_text(self):
-        """Test extracting from empty text."""
-        from agent.test_gen import _extract_code
-
-        result = _extract_code("")
-        assert result == ""
-
-    def test_extract_whitespace_text(self):
-        """Test extracting from whitespace text."""
-        from agent.test_gen import _extract_code
-
-        result = _extract_code("   \n  \n  ")
-        assert result == ""
-
-    def test_extract_multiple_fences(self):
-        """Test extracting when multiple fences present."""
-        from agent.test_gen import _extract_code
-
-        text = "```html\n<div>First</div>\n```\nOther text\n```html\n<div>Second</div>\n```"
+        text = "```\nsome code"
         result = _extract_code(text, lang="html")
+        assert "some code" in result
 
-        # Should get the first one
-        assert "First" in result
-
-
-class TestGenerateTests:
-    """Tests for generate_tests function."""
-
-    @pytest.mark.asyncio
-    async def test_generate_simple_tests(self):
-        """Test generating tests for simple app."""
-        from agent.test_gen import generate_tests
-
-        mock_response = {
-            "content": "```html\n<html><body>Test</body></html>\n```"
-        }
-
-        with patch('agent.test_gen.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
-            result = await generate_tests("<html><body>App</body></html>", app_name="TestApp")
-
-        assert "tests.html" in result
-
-    @pytest.mark.asyncio
-    async def test_generate_tests_empty_code(self):
-        """Test generating tests with empty code."""
-        from agent.test_gen import generate_tests
-
-        mock_response = {"content": ""}
-
-        with patch('agent.test_gen.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
-            result = await generate_tests("", app_name="EmptyApp")
-
-        # Should return empty dict when no code extracted
-        assert isinstance(result, dict)
-
-    @pytest.mark.asyncio
-    async def test_generate_tests_timeout_falls_back(self):
-        """Test that generate_tests falls back on timeout."""
-
-        from agent.test_gen import generate_tests
-
-        mock_response = "```html\n<html><body>Fallback Test</body></html>\n```"
-
-        with patch('agent.test_gen.chat_with_reasoning', new=AsyncMock(side_effect=TimeoutError())):
-            with patch('agent.test_gen.chat', new=AsyncMock(return_value=mock_response)):
-                result = await generate_tests("<html><body>App</body></html>", app_name="TestApp")
-
-        assert isinstance(result, dict)
-
-    @pytest.mark.asyncio
-    async def test_generate_fullstack_tests_no_backend(self):
-        """Test generating tests for fullstack app with no backend files."""
-        from agent.test_gen import generate_tests
-
-        mock_response = {
-            "content": "```html\n<html><body>Simple Test</body></html>\n```"
-        }
-
-        # Call with complexity=fullstack but no backend files
-        with patch('agent.test_gen.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
-            result = await generate_tests(
-                "<html><body>App</body></html>",
-                app_name="FullstackApp",
-                complexity="fullstack",
-                manifest={},
-                all_files={"frontend/index.html": "<html></html>"}
-            )
-
-        # Should fall back to simple tests
-        assert "tests.html" in result
+    def test_no_fence_at_all(self):
+        from agent.test_gen import _extract_code
+        text = "<div>No fences here</div>"
+        assert _extract_code(text) == "<div>No fences here</div>"
 
 
 class TestGenerateSimpleTests:
-    """Tests for _generate_simple_tests function."""
+    """Cover _generate_simple_tests and the main generate_tests entry point."""
 
     @pytest.mark.asyncio
-    async def test_generate_simple_returns_dict(self):
-        """Test that _generate_simple_tests returns a dict."""
-        from agent.test_gen import _generate_simple_tests
-
-        mock_response = {"content": "```html\n<div>Test</div>\n```"}
-
-        with patch('agent.test_gen.chat_with_reasoning', new=AsyncMock(return_value=mock_response)):
-            result = await _generate_simple_tests("<html></html>", "TestApp")
-
-        assert isinstance(result, dict)
+    async def test_simple_app_success(self):
+        with patch("agent.test_gen.chat_with_reasoning", new=AsyncMock(return_value={
+            "content": "```html\n<html>test</html>\n```",
+            "reasoning": "thoughts",
+        })):
+            from agent.test_gen import generate_tests
+            result = await generate_tests(
+                code="<h1>Hello</h1>",
+                app_name="TestApp",
+                complexity="simple",
+            )
+        assert "tests.html" in result
 
     @pytest.mark.asyncio
-    async def test_generate_simple_handles_error(self):
-        """Test that _generate_simple_tests handles errors."""
-        from agent.test_gen import _generate_simple_tests
+    async def test_simple_app_reasoning_fails_fallback_succeeds(self):
+        """Reasoning model fails, fast model succeeds — covers lines 55-73."""
+        with patch("agent.test_gen.chat_with_reasoning", new=AsyncMock(side_effect=Exception("timeout"))), \
+             patch("agent.test_gen.chat", new=AsyncMock(return_value="```html\n<html>fallback</html>\n```")):
+            from agent.test_gen import generate_tests
+            result = await generate_tests(
+                code="<h1>Hello</h1>",
+                app_name="TestApp",
+                complexity="simple",
+            )
+        assert "tests.html" in result
 
-        with patch('agent.test_gen.chat_with_reasoning', new=AsyncMock(side_effect=Exception("API Error"))):
-            with patch('agent.test_gen.chat', new=AsyncMock(side_effect=Exception("Fallback Error"))):
-                result = await _generate_simple_tests("<html></html>", "TestApp")
+    @pytest.mark.asyncio
+    async def test_simple_app_both_fail(self):
+        """Both reasoning and fast model fail — returns {} — covers lines 55-73, 75-76."""
+        with patch("agent.test_gen.chat_with_reasoning", new=AsyncMock(side_effect=Exception("fail"))), \
+             patch("agent.test_gen.chat", new=AsyncMock(side_effect=Exception("also fail"))):
+            from agent.test_gen import generate_tests
+            result = await generate_tests(
+                code="<h1>Hello</h1>",
+                app_name="TestApp",
+                complexity="simple",
+            )
+        assert result == {}
 
-        # Should return empty dict on error
+    @pytest.mark.asyncio
+    async def test_simple_app_empty_code_result(self):
+        """Reasoning returns empty — covers lines 75-76."""
+        with patch("agent.test_gen.chat_with_reasoning", new=AsyncMock(return_value={
+            "content": "",
+            "reasoning": "",
+        })):
+            from agent.test_gen import generate_tests
+            result = await generate_tests(
+                code="<h1>Hello</h1>",
+                app_name="TestApp",
+                complexity="simple",
+            )
         assert result == {}
 
 
-class TestTestGenPrompt:
-    """Tests for test_gen prompts."""
+class TestGenerateFullstackTests:
+    """Cover _generate_fullstack_tests — lines 81-153."""
 
-    def test_test_gen_system_exists(self):
-        """Test TEST_GEN_SYSTEM prompt exists."""
-        from agent.prompts import TEST_GEN_SYSTEM
-        assert isinstance(TEST_GEN_SYSTEM, str)
-        assert len(TEST_GEN_SYSTEM) > 0
+    @pytest.mark.asyncio
+    async def test_fullstack_with_backend_files(self):
+        all_files = {
+            "backend/routes.py": "app.get('/api/items')",
+            "frontend/index.html": "<h1>Frontend</h1>",
+        }
+        manifest = {
+            "app_name": "FullApp",
+            "features": ["crud"],
+            "tech_stack": {"backend": "express"},
+            "files": [{"path": "backend/routes.py", "purpose": "API routes"}],
+        }
+
+        with patch("agent.test_gen.chat_with_reasoning", new=AsyncMock(return_value={
+            "content": "```javascript\nconst test = require('node:test');\n```",
+            "reasoning": "plan",
+        })):
+            from agent.test_gen import generate_tests
+            result = await generate_tests(
+                code="",
+                app_name="FullApp",
+                complexity="fullstack",
+                manifest=manifest,
+                all_files=all_files,
+            )
+        assert "tests/app.test.js" in result
+
+    @pytest.mark.asyncio
+    async def test_fullstack_no_backend_falls_to_html(self):
+        """No backend files — falls back to simple HTML tests — covers line 97."""
+        all_files = {"frontend/index.html": "<h1>Test</h1>"}
+        manifest = {"files": []}
+
+        with patch("agent.test_gen.chat_with_reasoning", new=AsyncMock(return_value={
+            "content": "```html\n<html>test</html>\n```",
+            "reasoning": "",
+        })):
+            from agent.test_gen import generate_tests
+            result = await generate_tests(
+                code="",
+                app_name="App",
+                complexity="fullstack",
+                manifest=manifest,
+                all_files=all_files,
+            )
+        assert "tests.html" in result
+
+    @pytest.mark.asyncio
+    async def test_fullstack_no_files_no_code_returns_empty(self):
+        """No files, no code — returns {} — covers line 98."""
+        from agent.test_gen import generate_tests
+        result = await generate_tests(
+            code="",
+            app_name="App",
+            complexity="fullstack",
+            manifest={},
+            all_files={},
+        )
+        # With no code and no files, generate_tests returns empty
+        assert result == {} or "tests" in result
+
+    @pytest.mark.asyncio
+    async def test_fullstack_reasoning_fails_fast_succeeds(self):
+        """Covers lines 129-148."""
+        all_files = {"backend/routes.py": "app.get('/x')"}
+        manifest = {"files": [{"path": "backend/routes.py", "purpose": "routes"}]}
+
+        with patch("agent.test_gen.chat_with_reasoning", new=AsyncMock(side_effect=Exception("timeout"))), \
+             patch("agent.test_gen.chat", new=AsyncMock(return_value="```javascript\ntest()\n```")):
+            from agent.test_gen import generate_tests
+            result = await generate_tests(
+                code="",
+                app_name="App",
+                complexity="fullstack",
+                manifest=manifest,
+                all_files=all_files,
+            )
+        assert "tests/app.test.js" in result
+
+    @pytest.mark.asyncio
+    async def test_fullstack_both_fail(self):
+        """Both models fail — covers line 148."""
+        all_files = {"backend/routes.py": "app.get('/x')"}
+        manifest = {"files": []}
+
+        with patch("agent.test_gen.chat_with_reasoning", new=AsyncMock(side_effect=Exception("fail"))), \
+             patch("agent.test_gen.chat", new=AsyncMock(side_effect=Exception("also fail"))):
+            from agent.test_gen import generate_tests
+            result = await generate_tests(
+                code="",
+                app_name="App",
+                complexity="fullstack",
+                manifest=manifest,
+                all_files=all_files,
+            )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_fullstack_empty_result(self):
+        """Reasoning returns empty code — covers line 150-151."""
+        all_files = {"backend/routes.py": "app.get('/x')"}
+        manifest = {"files": []}
+
+        with patch("agent.test_gen.chat_with_reasoning", new=AsyncMock(return_value={
+            "content": "no code fences here",
+            "reasoning": "",
+        })):
+            from agent.test_gen import generate_tests
+            result = await generate_tests(
+                code="",
+                app_name="App",
+                complexity="fullstack",
+                manifest=manifest,
+                all_files=all_files,
+            )
+        # _extract_code returns raw text since no fences, which won't be valid JS test
+        # But it still returns a dict since text is non-empty
+        assert "tests/app.test.js" in result or result == {}

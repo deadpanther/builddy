@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Twitter Scraper
     ENABLE_TWITTER_SCRAPER: bool = True
 
+    # Post-processing agents
+    ENABLE_AUTOPILOT: bool = True            # Auto-fix runtime errors via headless browser loop
+    ENABLE_AUTO_TEST_GEN: bool = True        # Generate + deploy test suites after build
+
     # Database
     DATABASE_URL: str = "sqlite:///./buildy.db"
 

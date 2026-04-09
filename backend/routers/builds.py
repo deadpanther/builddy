@@ -27,7 +27,7 @@ from models import Build
 from services.event_bus import subscribe, unsubscribe
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/builds", tags=["builds"])
+router = APIRouter(prefix="/api/builds", tags=["Builds"])
 
 
 class BuildCreate(BaseModel):
