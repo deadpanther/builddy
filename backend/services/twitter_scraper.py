@@ -28,6 +28,9 @@ NITTER_HOSTS = [
     "xcancel.com",
     "nitter.poast.org",
     "nitter.privacydev.net",
+    "nitter.cz",
+    "nitter.1d4.us",
+    "nitter.woodland.cafe",
 ]
 
 POLL_INTERVAL = 40  # seconds between checks
@@ -78,40 +81,65 @@ class TwitterMentionScraper:
 
     async def _ensure_browser(self, pw):
         """Launch a lightweight Chromium browser."""
-        self._context = await pw.chromium.launch_persistent_context(
-            user_data_dir=str(Path(__file__).parent.parent / ".nitter_browser_state"),
-            headless=IS_RAILWAY,
-            viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
-        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+        # Use volume on Railway, local dir otherwise
+        state_dir = _data_dir / ".nitter_browser_state" if IS_RAILWAY else Path(__file__).parent.parent / ".nitter_browser_state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self._context = await pw.chromium.launch_persistent_context(
+                user_data_dir=str(state_dir),
+                headless=IS_RAILWAY,
+                viewport={"width": 1280, "height": 900},
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                args=["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
+            )
+            self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+            logger.info("Browser launched (headless=%s, state=%s)", IS_RAILWAY, state_dir)
+        except Exception as e:
+            logger.error("Failed to launch browser: %s", e)
+            raise
 
     async def _find_working_host(self) -> str | None:
         """Try Nitter instances until one works."""
         for host in NITTER_HOSTS:
             url = f"https://{host}/search?f=tweets&q=%40builddy"
             try:
+                logger.info("Trying Nitter instance: %s", host)
                 resp = await self._page.goto(url, wait_until="domcontentloaded", timeout=15000)
                 await self._page.wait_for_timeout(3000)
-                if resp and resp.status == 200 and "login" not in self._page.url:
-                    # Nitter sometimes needs a refresh on first load
+
+                status = resp.status if resp else 0
+                current_url = self._page.url
+
+                if status != 200:
+                    logger.info("  %s returned HTTP %d", host, status)
+                    continue
+                if "login" in current_url:
+                    logger.info("  %s redirected to login", host)
+                    continue
+
+                # Nitter sometimes needs a refresh on first load
+                items = await self._page.query_selector_all(".timeline-item")
+                if not items:
+                    logger.info("  %s: no items on first load, refreshing...", host)
+                    await self._page.reload(wait_until="domcontentloaded", timeout=15000)
+                    await self._page.wait_for_timeout(4000)
                     items = await self._page.query_selector_all(".timeline-item")
-                    if not items:
-                        await self._page.reload(wait_until="domcontentloaded", timeout=15000)
-                        await self._page.wait_for_timeout(3000)
-                    items = await self._page.query_selector_all(".timeline-item")
-                    if items:
-                        logger.info("Nitter instance %s works (%d tweets found)", host, len(items))
-                        return host
-                    # Maybe different structure
-                    body = await self._page.inner_text("body")
-                    if len(body) > 200 and "No items found" not in body:
-                        logger.info("Nitter instance %s has content", host)
-                        return host
-                logger.debug("Nitter instance %s: no results", host)
+
+                if items:
+                    logger.info("Nitter instance %s works! Found %d tweets", host, len(items))
+                    return host
+
+                # Check if page has any content at all
+                body = await self._page.inner_text("body")
+                body_len = len(body.strip())
+                logger.info("  %s: %d items, body %d chars. First 200: %s", host, len(items), body_len, body[:200])
+
+                if body_len > 200 and "No items found" not in body:
+                    logger.info("Nitter instance %s has content (no .timeline-item but body looks valid)", host)
+                    return host
+
             except Exception as e:
-                logger.debug("Nitter instance %s failed: %s", host, e)
+                logger.info("  %s error: %s", host, str(e)[:100])
         return None
 
     async def _scrape_mentions(self) -> list[dict]:
