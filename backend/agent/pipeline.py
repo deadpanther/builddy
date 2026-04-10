@@ -331,71 +331,13 @@ async def _retry_simple(build_id: str, prompt: str, failed_at: str):
         _add_step(build_id, "Resuming from review (code already generated)")
         code = await review_code(build_id, existing_code)
     elif failed_at in ("coding", "planning", "pending") or not existing_code:
-        # Need to generate code — use fast model directly (GLM-5.1 already failed)
-        _add_step(build_id, "Retrying code generation with fast model (skipping redundant steps)...")
+        # Retry code generation using the same streaming path as the main pipeline
+        _add_step(build_id, "Retrying code generation with streaming...")
         _update_build(build_id, status="coding")
 
-        code_text = await chat(
-            messages=[
-                {"role": "system", "content": CODE_SYSTEM},
-                {"role": "user", "content": (
-                    f"Build this app: {prompt}\n\n"
-                    f"Generate the COMPLETE single-file HTML app using Tailwind CSS CDN. "
-                    f"Include dark mode toggle, animations, empty states, toast notifications. "
-                    f"Wrap your code in ```html fences."
-                )},
-            ],
-            temperature=0.7,
-            max_tokens=16384,
-            retries=3,
-            thinking=False,
-            model=settings.GLM_FAST_MODEL,
-        )
-        code = strip_fences(code_text)
-
-        if not code:
-            # Try fallback model
-            _add_step(build_id, "Fast model empty — trying fallback model...")
-            code_text = await chat(
-                messages=[
-                    {"role": "system", "content": CODE_SYSTEM},
-                    {"role": "user", "content": f"Build a complete single-file HTML app for: {prompt}\n\nWrap in ```html fences."},
-                ],
-                temperature=0.7,
-                max_tokens=16384,
-                retries=2,
-                thinking=False,
-                model=settings.GLM_FALLBACK_MODEL,
-            )
-            code = strip_fences(code_text)
-
-        if not code:
-            # Last resort: try the primary model (glm-5.1) — may have separate quota
-            _add_step(build_id, "Fallback also empty — trying primary model (glm-5.1)...")
-            await asyncio.sleep(10)  # Wait before hitting primary
-            code_text = await chat(
-                messages=[
-                    {"role": "system", "content": CODE_SYSTEM},
-                    {"role": "user", "content": f"Build a complete single-file HTML app for: {prompt}\n\nWrap in ```html fences."},
-                ],
-                temperature=0.7,
-                max_tokens=16384,
-                retries=2,
-                thinking=False,
-                model=settings.GLM_MODEL,
-            )
-            code = strip_fences(code_text)
-
-        if not code:
-            _add_step(
-                build_id,
-                "All models rate-limited. Wait a few minutes and retry, "
-                "or set GLM_MAX_CONCURRENT_REQUESTS=1 to reduce load.",
-            )
-            raise ValueError("All models returned empty code — cannot proceed")
-
-        _update_build(build_id, generated_code=code)
-        _add_step(build_id, f"Code generated ({len(code)} chars)")
+        # Reuse generate_code() which streams live via SSE + uses GLM_CODE_MODEL
+        code = await generate_code(build_id, prompt, f"Build a complete, polished app for: {prompt}")
+        _update_build(build_id, generated_code=code, generated_files=json.dumps({"index.html": code}))
     else:
         # Unknown — use existing code or fail
         code = existing_code or ""
