@@ -212,12 +212,19 @@ class TwitterMentionScraper:
         if not tweet_text:
             return None
 
-        # Get username
-        username_el = await item.query_selector(".username, a[href^='/']")
+        # Get username from the status link (most reliable)
+        # href is like /Neelkamalshah/status/12345
         twitter_username = "unknown"
-        if username_el:
-            raw = await username_el.inner_text()
-            twitter_username = raw.lstrip("@").strip()
+        if href:
+            parts = href.strip("/").split("/")
+            if parts:
+                twitter_username = parts[0]
+        # Fallback: try .username element
+        if twitter_username == "unknown":
+            username_el = await item.query_selector(".username")
+            if username_el:
+                raw = await username_el.inner_text()
+                twitter_username = raw.lstrip("@").strip()
 
         # Check if it's a reply
         reply_el = await item.query_selector(".replying-to, .reply-to")
@@ -341,17 +348,25 @@ class TwitterMentionScraper:
             while self._running:
                 try:
                     mentions = await self._scrape_mentions()
+
+                    # Mark all as seen IMMEDIATELY (before submitting) to prevent
+                    # duplicates if the next poll fires before submission finishes
                     for m in mentions:
                         self._seen_tweet_ids.add(m["tweet_id"])
-                        # Enrich replies with parent context
+                    if mentions:
+                        self._save_seen_ids()
+
+                    # Submit one at a time with delay to avoid GLM rate limit storms
+                    for m in mentions:
                         prompt = m["tweet_text"].replace("@builddy", "").replace("@Builddy", "").strip()
                         if len(prompt) < 80 or "build" in prompt.lower():
                             m = await self._enrich_reply(m)
                         await self._submit_mention_to_backend(m)
+                        # Wait between submissions so builds don't all hit GLM at once
+                        await asyncio.sleep(5)
 
                     if mentions:
                         logger.info("Processed %d new mentions via Nitter", len(mentions))
-                        self._save_seen_ids()
 
                 except Exception as e:
                     logger.error("Scraper poll error: %s", e)
