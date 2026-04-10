@@ -7,7 +7,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DEPLOYED_DIR = Path(__file__).parent.parent / "deployed"
+import os
+# Use /app/data/deployed on Railway (persistent volume), ./deployed locally
+_default_deployed = Path(__file__).parent.parent / "deployed"
+DEPLOYED_DIR = Path(os.environ.get("DEPLOYED_DIR", str(_default_deployed)))
 
 
 def ensure_deployed_dir():

@@ -236,7 +236,7 @@ async def list_processes():
 
 
 # Serve thumbnails directly (before the html=True static mount which mangles non-HTML)
-DEPLOYED_DIR = Path(__file__).parent / "deployed"
+from services.deployer import DEPLOYED_DIR
 DEPLOYED_DIR.mkdir(parents=True, exist_ok=True)
 
 
