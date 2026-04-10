@@ -24,6 +24,7 @@ class Build(SQLModel, table=True):
     generated_code: str | None = Field(default=None)
     deploy_url: str | None = Field(default=None)
     parent_build_id: str | None = Field(default=None)  # links to original build for modifications
+    workspace_id: str | None = Field(default=None, index=True)  # groups related builds (multi-app workspace)
     build_type: str = Field(default="text")  # text or screenshot
     complexity: str | None = Field(default="simple")  # simple, standard, fullstack
     thumbnail_url: str | None = Field(default=None)  # CogView-4 generated thumbnail
@@ -41,6 +42,11 @@ class Build(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     deployed_at: datetime | None = Field(default=None)
+    # Extended metadata (JSON strings)
+    build_options: str | None = Field(default=None)  # constraints, acceptance_checks, etc.
+    quality_status: str | None = Field(default=None)  # pending, ok, failed
+    webhook_url: str | None = Field(default=None)  # outbound webhook for build events
+    step_events: str | None = Field(default=None)  # JSON [{ "m": message, "t": iso8601 }]
 
 
 class Mention(SQLModel, table=True):

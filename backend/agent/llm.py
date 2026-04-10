@@ -11,10 +11,24 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+# Serialize / bound parallel GLM calls so N concurrent pipelines (e.g. N Twitter
+# ingests) do not each open their own in-flight requests against the same quota.
+_glm_concurrency_sem: asyncio.Semaphore | None = None
+
+
+def _glm_slot() -> asyncio.Semaphore:
+    global _glm_concurrency_sem
+    if _glm_concurrency_sem is None:
+        n = max(1, int(getattr(settings, "GLM_MAX_CONCURRENT_REQUESTS", 2)))
+        _glm_concurrency_sem = asyncio.Semaphore(n)
+        logger.info("GLM concurrency cap: max %d simultaneous API requests", n)
+    return _glm_concurrency_sem
+
+
 # Rate-limit backoff settings
 RATE_LIMIT_CODES = {429, 503, 529}
-RATE_LIMIT_INITIAL_WAIT = 3      # seconds
-RATE_LIMIT_MAX_WAIT = 30         # seconds
+RATE_LIMIT_INITIAL_WAIT = 5      # seconds — start higher to avoid burning retries
+RATE_LIMIT_MAX_WAIT = 60         # seconds — give GLM time to free quota
 
 
 async def _request_with_fallback(
@@ -38,51 +52,52 @@ async def _request_with_fallback(
 
         for attempt in range(retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=300) as client:
-                    resp = await client.post(
-                        f"{settings.GLM_BASE_URL}chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {settings.GLM_API_KEY}",
-                            "Content-Type": "application/json",
-                        },
-                        json=payload_copy,
-                    )
-
-                # Check for rate limit via HTTP status
-                if resp.status_code in RATE_LIMIT_CODES:
-                    retry_after = resp.headers.get("retry-after")
-                    wait_time = int(retry_after) if retry_after else wait
-                    logger.warning(
-                        "Rate limited (HTTP %d) on %s — waiting %ds (attempt %d/%d)",
-                        resp.status_code, model, wait_time, attempt + 1, retries + 1,
-                    )
-                    await asyncio.sleep(wait_time)
-                    wait = min(wait * 2, RATE_LIMIT_MAX_WAIT)
-                    continue
-
-                data = resp.json()
-
-                # Check for rate limit via error response body
-                if "error" in data:
-                    err_code = data["error"].get("code", "")
-                    err_msg = str(data["error"].get("message", ""))
-                    if "rate" in err_msg.lower() or "concurrency" in err_msg.lower() or err_code == "1302":
-                        logger.warning(
-                            "Rate limited (API error) on %s — waiting %ds (attempt %d/%d): %s",
-                            model, wait, attempt + 1, retries + 1, err_msg[:100],
+                async with _glm_slot():
+                    async with httpx.AsyncClient(timeout=300) as client:
+                        resp = await client.post(
+                            f"{settings.GLM_BASE_URL}chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {settings.GLM_API_KEY}",
+                                "Content-Type": "application/json",
+                            },
+                            json=payload_copy,
                         )
-                        await asyncio.sleep(wait)
-                        wait = min(wait * 2, RATE_LIMIT_MAX_WAIT)
-                        continue
 
-                    # Non-rate-limit API error
-                    logger.error("GLM API error on %s: %s", model, json.dumps(data["error"])[:200])
-                    if attempt < retries:
-                        await asyncio.sleep(2)
-                        continue
-                    break  # try fallback model
+                        # Check for rate limit via HTTP status
+                        if resp.status_code in RATE_LIMIT_CODES:
+                            retry_after = resp.headers.get("retry-after")
+                            wait_time = int(retry_after) if retry_after else wait
+                            logger.warning(
+                                "Rate limited (HTTP %d) on %s — waiting %ds (attempt %d/%d)",
+                                resp.status_code, model, wait_time, attempt + 1, retries + 1,
+                            )
+                            await asyncio.sleep(wait_time)
+                            wait = min(wait * 2, RATE_LIMIT_MAX_WAIT)
+                            continue
 
-                return data
+                        data = resp.json()
+
+                        # Check for rate limit via error response body
+                        if "error" in data:
+                            err_code = data["error"].get("code", "")
+                            err_msg = str(data["error"].get("message", ""))
+                            if "rate" in err_msg.lower() or "concurrency" in err_msg.lower() or err_code == "1302":
+                                logger.warning(
+                                    "Rate limited (API error) on %s — waiting %ds (attempt %d/%d): %s",
+                                    model, wait, attempt + 1, retries + 1, err_msg[:100],
+                                )
+                                await asyncio.sleep(wait)
+                                wait = min(wait * 2, RATE_LIMIT_MAX_WAIT)
+                                continue
+
+                            # Non-rate-limit API error
+                            logger.error("GLM API error on %s: %s", model, json.dumps(data["error"])[:200])
+                            if attempt < retries:
+                                await asyncio.sleep(2)
+                                continue
+                            break  # try fallback model
+
+                        return data
 
             except httpx.TimeoutException:
                 logger.warning("GLM timeout on %s (attempt %d/%d)", model, attempt + 1, retries + 1)
@@ -280,30 +295,31 @@ async def chat_streaming(
 
     accumulated = ""
     try:
-        async with httpx.AsyncClient(timeout=300) as client, client.stream(
-            "POST",
-            f"{settings.GLM_BASE_URL}chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.GLM_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        ) as response:
-            async for line in response.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                data_str = line[6:].strip()
-                if data_str == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data_str)
-                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                    content = delta.get("content", "")
-                    if content:
-                        accumulated += content
-                        await on_chunk(accumulated)
-                except (json.JSONDecodeError, IndexError, KeyError):
-                    continue
+        async with _glm_slot():
+            async with httpx.AsyncClient(timeout=300) as client, client.stream(
+                "POST",
+                f"{settings.GLM_BASE_URL}chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.GLM_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            ) as response:
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            accumulated += content
+                            await on_chunk(accumulated)
+                    except (json.JSONDecodeError, IndexError, KeyError):
+                        continue
 
         logger.info("GLM streaming complete: %d chars", len(accumulated))
         return accumulated
@@ -324,20 +340,21 @@ async def generate_image(prompt: str, size: str = "1024x1024") -> str | None:
     logger.info("CogView-4 image gen → %s", prompt[:80])
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                f"{settings.GLM_BASE_URL}images/generations",
-                headers={
-                    "Authorization": f"Bearer {settings.GLM_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "size": size,
-                },
-            )
-            data = resp.json()
+        async with _glm_slot():
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(
+                    f"{settings.GLM_BASE_URL}images/generations",
+                    headers={
+                        "Authorization": f"Bearer {settings.GLM_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "size": size,
+                    },
+                )
+                data = resp.json()
 
         if "error" in data:
             logger.error("CogView-4 error: %s", json.dumps(data["error"]))

@@ -179,6 +179,8 @@ Rules:
 
 Output the COMPLETE modified HTML file wrapped in ```html code fences. The code must start with <!DOCTYPE html> and end with </html>."""
 
+QUICK_MODIFY_SYSTEM = """You are Builddy. Apply a SMALL, targeted UI or copy change to the existing HTML app. Minimal diff mindset: preserve structure and behavior; only change what the user asked. Output the COMPLETE HTML in ```html fences."""
+
 REVIEW_SYSTEM = """You are Builddy's senior code reviewer powered by GLM 5.1. You review with the eye of a design-obsessed engineer — both code quality AND visual polish matter.
 
 ## Review Checklist (check ALL of these):

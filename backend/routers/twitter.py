@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from config import settings
 from database import get_new_session, get_session
 from models import Build, Mention
 from services.twitter import post_reply, search_mentions, twitter_configured
@@ -21,6 +22,19 @@ router = APIRouter(prefix="/api/twitter", tags=["Twitter"])
 
 _poll_task: asyncio.Task | None = None
 POLL_INTERVAL_SECONDS = 60  # check every 60s
+
+# One mention → one pipeline → many GLM requests. Serializing Twitter builds avoids 4× load when
+# the scraper submits several mentions in one poll (still "one user", one API key).
+_twitter_pipeline_sem: asyncio.Semaphore | None = None
+
+
+def _twitter_pipeline_semaphore() -> asyncio.Semaphore:
+    global _twitter_pipeline_sem
+    if _twitter_pipeline_sem is None:
+        n = max(1, int(getattr(settings, "TWITTER_MAX_CONCURRENT_PIPELINES", 1)))
+        _twitter_pipeline_sem = asyncio.Semaphore(n)
+        logger.info("Twitter mention builds: max %d concurrent pipeline(s)", n)
+    return _twitter_pipeline_sem
 
 
 async def _poll_loop():
@@ -93,7 +107,8 @@ async def _process_mentions():
             session.add(mention)
             session.commit()
 
-            # Kick off pipeline + reply flow
+            # Each mention starts a full pipeline concurrently (many = GLM 429s). GLM calls are
+            # globally capped via GLM_MAX_CONCURRENT_REQUESTS in agent/llm.py.
             asyncio.create_task(_build_and_reply(build.id, m["tweet_id"], m["twitter_username"]))
 
     finally:
@@ -262,6 +277,7 @@ async def poll_mentions(session: Session = Depends(get_session)):
         session.add(mention)
         session.commit()
 
+        # Concurrent with other ingests / dashboard builds; see GLM_MAX_CONCURRENT_REQUESTS.
         asyncio.create_task(_build_and_reply(build.id, m["tweet_id"], m["twitter_username"]))
 
         new_count += 1
@@ -345,7 +361,8 @@ async def ingest_mention(data: ScrapedMention, session: Session = Depends(get_se
     session.add(mention)
     session.commit()
 
-    # Use screenshot pipeline if parent screenshot is present
+    # Playwright scraper often submits several mentions in one poll; each create_task is a
+    # concurrent pipeline. Mention polling itself does not call GLM — only these tasks do.
     if has_screenshot:
         asyncio.create_task(
             _build_screenshot_and_reply(

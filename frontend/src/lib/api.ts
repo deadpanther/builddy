@@ -25,11 +25,18 @@ export async function getBuild(id: string): Promise<Build> {
   return res.json();
 }
 
-export async function createBuild(prompt: string): Promise<Build> {
+export async function createBuild(
+  prompt: string,
+  extras?: { build_options?: Record<string, unknown>; webhook_url?: string }
+): Promise<Build> {
   const res = await fetch(`${API_BASE}/api/builds`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tweet_text: prompt }),
+    body: JSON.stringify({
+      tweet_text: prompt,
+      build_options: extras?.build_options,
+      webhook_url: extras?.webhook_url,
+    }),
   });
   if (!res.ok) throw new Error(`Failed to create build: ${res.statusText}`);
   return res.json();
@@ -45,11 +52,20 @@ export async function modifyBuild(buildId: string, modification: string): Promis
   return res.json();
 }
 
-export async function createBuildFromImage(imageBase64: string | string[], prompt?: string): Promise<Build> {
+export async function createBuildFromImage(
+  imageBase64: string | string[],
+  prompt?: string,
+  extras?: { build_options?: Record<string, unknown>; webhook_url?: string }
+): Promise<Build> {
   const res = await fetch(`${API_BASE}/api/builds/from-image`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image_base64: imageBase64, prompt: prompt || "" }),
+    body: JSON.stringify({
+      image_base64: imageBase64,
+      prompt: prompt || "",
+      build_options: extras?.build_options,
+      webhook_url: extras?.webhook_url,
+    }),
   });
   if (!res.ok) throw new Error(`Failed to create build from image: ${res.statusText}`);
   return res.json();
@@ -113,6 +129,69 @@ export async function getBuildChain(buildId: string): Promise<VersionEntry[]> {
   return res.json();
 }
 
+export async function getBuildDiff(buildId: string, otherId: string): Promise<{
+  build_a: string;
+  build_b: string;
+  files: Array<{ path: string; status: string; unified_diff: string }>;
+}> {
+  const res = await fetch(`${API_BASE}/api/builds/${buildId}/diff/${otherId}`);
+  if (!res.ok) throw new Error("Failed to load diff");
+  return res.json();
+}
+
+export async function restoreBuildFrom(anchorId: string, sourceBuildId: string): Promise<Build> {
+  const res = await fetch(`${API_BASE}/api/builds/${anchorId}/restore`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_build_id: sourceBuildId }),
+  });
+  if (!res.ok) throw new Error(`Restore failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function quickModifyBuild(buildId: string, instruction: string): Promise<Build> {
+  const res = await fetch(`${API_BASE}/api/builds/${buildId}/quick-modify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction }),
+  });
+  if (!res.ok) throw new Error(`Quick modify failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getBuildStepsDetail(buildId: string): Promise<{
+  build_id: string;
+  status: string;
+  steps: unknown[];
+  timing?: Array<{
+    message: string;
+    at: string;
+    since_previous_ms: number | null;
+    /** Wall-clock pause (e.g. before Retry); not pipeline work time */
+    idle_before_ms?: number;
+  }>;
+}> {
+  const res = await fetch(`${API_BASE}/api/builds/${buildId}/steps`);
+  if (!res.ok) throw new Error("Failed to load steps");
+  return res.json();
+}
+
+export async function listTemplateCatalog(): Promise<
+  Array<{ slug: string; name: string; description?: string; prompt?: string }>
+> {
+  const res = await fetch(`${API_BASE}/api/builds/catalog/templates`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function createBuildFromTemplate(slug: string): Promise<Build> {
+  const res = await fetch(`${API_BASE}/api/builds/from-template/${encodeURIComponent(slug)}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`Template start failed: ${res.statusText}`);
+  return res.json();
+}
+
 export async function remixBuild(buildId: string, prompt: string): Promise<Build> {
   const res = await fetch(`${API_BASE}/api/builds/${buildId}/remix`, {
     method: "POST",
@@ -167,6 +246,19 @@ export async function getDeployStatus(buildId: string): Promise<CloudDeployResul
 export async function getGallery(): Promise<GalleryApp[]> {
   const res = await fetch(`${API_BASE}/api/gallery`);
   if (!res.ok) return [];
+  return res.json();
+}
+
+export async function exportGithubPullRequest(buildId: string): Promise<{
+  repo_url: string;
+  pr_url: string;
+  pr_number?: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/builds/${buildId}/github-pr`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error((body as { detail?: string }).detail || res.statusText);
+  }
   return res.json();
 }
 

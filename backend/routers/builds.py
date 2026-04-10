@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -18,13 +19,19 @@ from agent.pipeline import (
     run_retry_pipeline,
     run_screenshot_pipeline,
 )
+from config import settings
 from database import get_session
 from models import Build
 from rate_limiter import limiter
+from services.build_tools import collect_chain_ids, diff_builds as compute_file_diffs
+from services.cloud_deploy import export_build_files_to_github, export_build_files_to_github_pr
 from services.event_bus import subscribe, unsubscribe
+from services.post_deploy_hooks import probe_build_url, schedule_post_deploy_hooks
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/builds", tags=["Builds"])
+
+_TEMPLATES_FILE = Path(__file__).resolve().parent.parent / "data" / "build_templates.json"
 
 
 class BuildCreate(BaseModel):
@@ -32,11 +39,33 @@ class BuildCreate(BaseModel):
     tweet_text: str | None = None
     twitter_username: str | None = None
     prompt: str | None = None
+    build_options: dict | None = None  # constraints, acceptance_paths, etc.
+    webhook_url: str | None = None
+    workspace_id: str | None = None
 
 
 class ScreenshotBuildCreate(BaseModel):
     image_base64: str | list[str]  # single base64 or list of base64 images
     prompt: str | None = ""  # text instructions (what the app should do)
+    build_options: dict | None = None
+    webhook_url: str | None = None
+    workspace_id: str | None = None
+
+
+class FigmaHandoffCreate(BaseModel):
+    """Design frame as image plus optional design tokens (JSON string)."""
+
+    image_base64: str
+    design_tokens: str | None = None  # JSON or CSS variables as text
+    prompt: str | None = ""
+
+
+class RestoreFromRequest(BaseModel):
+    source_build_id: str
+
+
+class QuickModifyRequest(BaseModel):
+    instruction: str
 
 
 class ModifyRequest(BaseModel):
@@ -80,6 +109,11 @@ class BuildResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     deployed_at: datetime | None = None
+    build_options: str | None = None
+    quality_status: str | None = None
+    webhook_url: str | None = None
+    step_events: str | None = None
+    workspace_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -95,6 +129,9 @@ async def create_build(request: Request, data: BuildCreate, session: Session = D
         prompt=data.prompt or data.tweet_text,
         build_type="text",
         status="pending",
+        build_options=json.dumps(data.build_options) if data.build_options else None,
+        webhook_url=data.webhook_url,
+        workspace_id=data.workspace_id,
     )
     session.add(build)
     session.commit()
@@ -128,6 +165,9 @@ async def create_build_from_image(request: Request, data: ScreenshotBuildCreate,
         app_name=app_name,
         build_type="screenshot",
         status="pending",
+        build_options=json.dumps(data.build_options) if data.build_options else None,
+        webhook_url=data.webhook_url,
+        workspace_id=data.workspace_id,
     )
     session.add(build)
     session.commit()
@@ -140,6 +180,7 @@ async def create_build_from_image(request: Request, data: ScreenshotBuildCreate,
 @router.get("", response_model=list[BuildResponse])
 async def list_builds(
     status: str | None = None,
+    workspace_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
     session: Session = Depends(get_session),
@@ -148,9 +189,22 @@ async def list_builds(
     statement = select(Build).order_by(Build.created_at.desc())
     if status:
         statement = statement.where(Build.status == status)
+    if workspace_id:
+        statement = statement.where(Build.workspace_id == workspace_id)
     statement = statement.offset(offset).limit(limit)
     builds = session.exec(statement).all()
     return builds
+
+
+@router.get("/catalog/templates")
+async def list_template_catalog():
+    """Built-in template slugs for Start-from-template flows."""
+    if not _TEMPLATES_FILE.is_file():
+        return []
+    try:
+        return json.loads(_TEMPLATES_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
 
 
 @router.get("/{build_id}", response_model=BuildResponse)
@@ -169,7 +223,38 @@ async def get_build_steps(build_id: str, session: Session = Depends(get_session)
     if not build:
         raise HTTPException(status_code=404, detail="Build not found")
     steps = json.loads(build.steps) if build.steps else []
-    return {"build_id": build_id, "status": build.status, "steps": steps}
+    # Gaps longer than this are "idle" (e.g. user waited before Retry) — not step duration.
+    _IDLE_GAP_MS = 5 * 60 * 1000
+
+    timing: list[dict] = []
+    try:
+        events = json.loads(build.step_events) if build.step_events else []
+        from datetime import datetime as dt
+
+        prev: dt | None = None
+        for ev in events:
+            if not isinstance(ev, dict) or "t" not in ev:
+                continue
+            try:
+                cur = dt.fromisoformat(ev["t"].replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            delta_ms = None
+            if prev is not None:
+                delta_ms = int((cur - prev).total_seconds() * 1000)
+            row: dict = {"message": ev.get("m", ""), "at": ev["t"]}
+            if delta_ms is None:
+                row["since_previous_ms"] = None
+            elif delta_ms > _IDLE_GAP_MS:
+                row["since_previous_ms"] = None
+                row["idle_before_ms"] = delta_ms
+            else:
+                row["since_previous_ms"] = delta_ms
+            timing.append(row)
+            prev = cur
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return {"build_id": build_id, "status": build.status, "steps": steps, "timing": timing}
 
 
 @router.get("/{build_id}/stream")
@@ -557,6 +642,220 @@ async def get_build_chain(build_id: str, session: Session = Depends(get_session)
     return chain
 
 
+@router.get("/{build_id}/diff/{other_id}")
+async def build_file_diff(build_id: str, other_id: str, session: Session = Depends(get_session)):
+    """Unified diff of generated files between two builds (same chain not required)."""
+    ba = session.get(Build, build_id)
+    bb = session.get(Build, other_id)
+    if not ba or not bb:
+        raise HTTPException(status_code=404, detail="Build not found")
+    return {
+        "build_a": build_id,
+        "build_b": other_id,
+        "files": compute_file_diffs(ba, bb),
+    }
+
+
+@router.post("/{anchor_id}/restore", response_model=BuildResponse)
+@limiter.limit("5/minute")
+async def restore_build_snapshot(
+    request: Request,
+    anchor_id: str,
+    data: RestoreFromRequest,
+    session: Session = Depends(get_session),
+):
+    """Create a new build that copies files from an older chain member; parent links to *anchor_id*."""
+    anchor = session.get(Build, anchor_id)
+    source = session.get(Build, data.source_build_id)
+    if not anchor or not source:
+        raise HTTPException(status_code=404, detail="Build not found")
+    chain = collect_chain_ids(session, anchor_id)
+    if data.source_build_id not in chain:
+        raise HTTPException(status_code=400, detail="Source build must be in the same version chain")
+
+    new_build = Build(
+        tweet_text=f"Restored from {source.id[:8]}",
+        prompt=f"Restored snapshot from build {source.id[:8]}",
+        app_name=source.app_name or anchor.app_name or "Restored app",
+        app_description=source.app_description,
+        parent_build_id=anchor_id,
+        build_type=source.build_type or "text",
+        complexity=source.complexity or "simple",
+        status="deploying",
+        generated_code=source.generated_code,
+        generated_files=source.generated_files,
+        file_manifest=source.file_manifest,
+        tech_stack=source.tech_stack,
+        thumbnail_url=source.thumbnail_url,
+    )
+    session.add(new_build)
+    session.commit()
+    session.refresh(new_build)
+
+    asyncio.create_task(_deploy_restored_build(new_build.id))
+    return new_build
+
+
+@router.post("/{build_id}/quick-modify", response_model=BuildResponse)
+@limiter.limit("10/minute")
+async def quick_modify_build(
+    request: Request,
+    build_id: str,
+    data: QuickModifyRequest,
+    session: Session = Depends(get_session),
+):
+    """Fast modification path for simple single-file HTML builds only."""
+    original = session.get(Build, build_id)
+    if not original:
+        raise HTTPException(status_code=404, detail="Build not found")
+    if original.complexity in ("standard", "fullstack") and original.generated_files:
+        raise HTTPException(
+            status_code=400,
+            detail="Quick modify supports simple HTML builds only; use /modify for fullstack",
+        )
+    if not original.generated_code:
+        raise HTTPException(status_code=400, detail="No generated HTML to modify")
+
+    new_build = Build(
+        tweet_text=data.instruction,
+        app_name=f"{original.app_name or 'App'} (quick)",
+        app_description=data.instruction,
+        prompt=data.instruction,
+        parent_build_id=build_id,
+        build_type=original.build_type,
+        complexity="simple",
+        status="pending",
+    )
+    session.add(new_build)
+    session.commit()
+    session.refresh(new_build)
+
+    asyncio.create_task(
+        run_modify_pipeline(new_build.id, original.generated_code, data.instruction, quick=True)
+    )
+    return new_build
+
+
+@router.get("/{build_id}/probe")
+async def probe_deployed_build(build_id: str, session: Session = Depends(get_session)):
+    """HTTP probe of deploy or cloud URL (post-deploy ops MVP)."""
+    build = session.get(Build, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Build not found")
+    return await probe_build_url(build)
+
+
+@router.post("/{build_id}/github-sync")
+@limiter.limit("3/minute")
+async def github_sync_build(request: Request, build_id: str, session: Session = Depends(get_session)):
+    """Export current build files to a new GitHub repository (requires GITHUB_TOKEN)."""
+    if not settings.GITHUB_TOKEN:
+        raise HTTPException(status_code=400, detail="GITHUB_TOKEN not configured")
+    build = session.get(Build, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Build not found")
+    project_files: dict[str, str] = {}
+    if build.generated_files:
+        project_files = json.loads(build.generated_files)
+    elif build.generated_code:
+        project_files = {"index.html": build.generated_code}
+    else:
+        raise HTTPException(status_code=400, detail="No files to export")
+
+    app_name = (build.app_name or "builddy-app").replace(" ", "-").lower()[:40]
+    repo_url = await export_build_files_to_github(build_id, project_files, app_name)
+    return {"repo_url": repo_url, "pull_requests_url": f"{repo_url}/compare"}
+
+
+@router.post("/{build_id}/github-pr")
+@limiter.limit("3/minute")
+async def github_pr_export(request: Request, build_id: str, session: Session = Depends(get_session)):
+    """Push files on a side branch and open a PR against the repo default branch."""
+    if not settings.GITHUB_TOKEN:
+        raise HTTPException(status_code=400, detail="GITHUB_TOKEN not configured")
+    build = session.get(Build, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Build not found")
+    project_files: dict[str, str] = {}
+    if build.generated_files:
+        project_files = json.loads(build.generated_files)
+    elif build.generated_code:
+        project_files = {"index.html": build.generated_code}
+    else:
+        raise HTTPException(status_code=400, detail="No files to export")
+
+    app_name = (build.app_name or "builddy-app").replace(" ", "-").lower()[:40]
+    try:
+        result = await export_build_files_to_github_pr(build_id, project_files, app_name)
+    except Exception as e:
+        logger.exception("GitHub PR export failed for %s", build_id)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return result
+
+
+@router.post("/from-template/{slug}", response_model=BuildResponse)
+@limiter.limit("10/minute")
+async def create_build_from_template(
+    request: Request,
+    slug: str,
+    session: Session = Depends(get_session),
+):
+    """Start a new text build from a built-in template slug."""
+    if not _TEMPLATES_FILE.is_file():
+        raise HTTPException(status_code=500, detail="Templates file missing")
+    try:
+        templates = json.loads(_TEMPLATES_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Invalid templates JSON: {e}") from e
+    entry = next((t for t in templates if t.get("slug") == slug), None)
+    if not entry or not entry.get("prompt"):
+        raise HTTPException(status_code=404, detail="Unknown template slug")
+
+    build = Build(
+        tweet_text=entry.get("name", slug),
+        prompt=entry["prompt"],
+        app_name=entry.get("name", slug)[:60],
+        app_description=entry.get("description", ""),
+        build_type="text",
+        status="pending",
+    )
+    session.add(build)
+    session.commit()
+    session.refresh(build)
+    asyncio.create_task(_run_build_pipeline(build.id))
+    return build
+
+
+@router.post("/from-figma", response_model=BuildResponse)
+@limiter.limit("5/minute")
+async def create_build_from_figma(request: Request, data: FigmaHandoffCreate, session: Session = Depends(get_session)):
+    """Figma / design handoff MVP: frame image + optional design tokens, same pipeline as screenshot."""
+    img = data.image_base64
+    if "," in img and img.startswith("data:"):
+        img = img.split(",", 1)[1]
+
+    prompt_text = data.prompt or ""
+    if data.design_tokens:
+        prompt_text = (
+            f"{prompt_text}\n\nDesign tokens / theme (apply consistently):\n{data.design_tokens[:12000]}"
+        ).strip()
+
+    app_name = (prompt_text.split(".")[0].strip()[:60] if prompt_text else "") or "Figma handoff"
+    build = Build(
+        tweet_text=prompt_text or "Figma handoff build",
+        prompt=prompt_text or "Implement the UI from the design frame; match spacing, typography, and colors.",
+        app_name=app_name,
+        build_type="screenshot",
+        status="pending",
+    )
+    session.add(build)
+    session.commit()
+    session.refresh(build)
+
+    asyncio.create_task(run_screenshot_pipeline(build.id, [img], prompt_text))
+    return build
+
+
 @router.post("/{build_id}/retry", response_model=BuildResponse)
 @limiter.limit("5/minute")
 async def retry_build(request: Request, build_id: str, session: Session = Depends(get_session)):
@@ -674,6 +973,50 @@ async def generate_tests_for_build(build_id: str, session: Session = Depends(get
         "test_files": list(test_files.keys()),
         "test_count": len(test_files),
     }
+
+
+async def _deploy_restored_build(build_id: str):
+    """Write restored snapshot to disk and mark build deployed."""
+    from database import engine as db_engine
+    from services.deployer import deploy_html, deploy_project
+
+    def _work() -> str | None:
+        with Session(db_engine) as session:
+            b = session.get(Build, build_id)
+            if not b:
+                return None
+            try:
+                if b.generated_files:
+                    files = json.loads(b.generated_files)
+                    url = deploy_project(build_id, files)
+                elif b.generated_code:
+                    url = deploy_html(build_id, b.generated_code)
+                else:
+                    b.status = "failed"
+                    b.error = "Restore failed: no code or files to deploy"
+                    b.updated_at = datetime.now(UTC)
+                    session.add(b)
+                    session.commit()
+                    return None
+                b.deploy_url = url
+                b.status = "deployed"
+                b.deployed_at = datetime.now(UTC)
+                b.updated_at = datetime.now(UTC)
+                session.add(b)
+                session.commit()
+                return url
+            except Exception as e:
+                logger.exception("Restore deploy failed for %s", build_id)
+                b.status = "failed"
+                b.error = f"Restore deploy failed: {e}"
+                b.updated_at = datetime.now(UTC)
+                session.add(b)
+                session.commit()
+                return None
+
+    url = await asyncio.to_thread(_work)
+    if url:
+        schedule_post_deploy_hooks(build_id, url)
 
 
 async def _run_build_pipeline(build_id: str):

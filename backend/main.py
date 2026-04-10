@@ -15,7 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from config import settings
 from database import create_db_and_tables
 from rate_limiter import limiter
-from routers import builds, gallery, prompts, twitter
+from routers import builds, discord, gallery, prompts, twitter
 from routers.twitter import start_twitter_poll, stop_twitter_poll
 from services.deployer import ensure_deployed_dir
 from services.process_manager import process_manager
@@ -80,6 +80,10 @@ tags_metadata = [
         "description": "Reverse proxy for running app backends. Forwards API requests to "
         "the live Express process of a deployed build.",
     },
+    {
+        "name": "Discord",
+        "description": "Authenticated HTTP ingest to create builds from external automations (e.g. Discord bots).",
+    },
 ]
 
 app = FastAPI(
@@ -128,6 +132,7 @@ app.add_middleware(
 
 # Mount routers
 app.include_router(builds.router)
+app.include_router(discord.router)
 app.include_router(twitter.router)
 app.include_router(gallery.router)
 app.include_router(prompts.router)

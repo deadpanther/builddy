@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ExternalLink,
@@ -12,23 +13,42 @@ import {
   Clock,
   Send,
   X,
+  Sparkles,
 } from "lucide-react";
-import { getGallery, resolveDeployUrl, remixBuild, API_BASE } from "@/lib/api";
+import {
+  getGallery,
+  resolveDeployUrl,
+  remixBuild,
+  API_BASE,
+  listTemplateCatalog,
+  createBuildFromTemplate,
+} from "@/lib/api";
 import type { GalleryApp } from "@/lib/types";
 
 type SortOption = "recent" | "trending";
 
+type TemplateEntry = { slug: string; name: string; description?: string };
+
 export default function GalleryPage() {
+  const router = useRouter();
   const [apps, setApps] = useState<GalleryApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortOption>("recent");
+  const [templates, setTemplates] = useState<TemplateEntry[]>([]);
+  const [templateBusy, setTemplateBusy] = useState<string | null>(null);
 
   useEffect(() => {
     getGallery()
       .then(setApps)
       .catch(() => {})
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    listTemplateCatalog()
+      .then((rows) => setTemplates(rows as TemplateEntry[]))
+      .catch(() => setTemplates([]));
   }, []);
 
   const filtered = (() => {
@@ -102,6 +122,41 @@ export default function GalleryPage() {
           </div>
         </div>
       </div>
+
+      {templates.length > 0 && (
+        <div className="mb-8 rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-amber-400" />
+            <h2 className="font-mono text-xs uppercase tracking-wider text-neutral-500">
+              Start from template
+            </h2>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {templates.map((t) => (
+              <button
+                key={t.slug}
+                type="button"
+                disabled={!!templateBusy}
+                onClick={async () => {
+                  setTemplateBusy(t.slug);
+                  try {
+                    const b = await createBuildFromTemplate(t.slug);
+                    router.push(`/build/${b.id}`);
+                  } catch {
+                    setTemplateBusy(null);
+                  }
+                }}
+                className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-3 py-2 text-left font-mono text-xs text-amber-200/90 transition-colors hover:border-amber-700 hover:bg-amber-950/40 disabled:opacity-50"
+              >
+                <span className="block font-semibold text-amber-100">{t.name}</span>
+                {t.description && (
+                  <span className="mt-0.5 block text-[10px] text-neutral-500">{t.description}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
@@ -202,8 +257,13 @@ function GalleryCard({ app }: { app: GalleryApp }) {
 
       {/* Title + badges */}
       <div className="flex items-start gap-2">
-        <h3 className="flex-1 font-semibold text-neutral-100 truncate">
-          {app.app_name}
+        <h3 className="flex-1 truncate font-semibold text-neutral-100">
+          <Link
+            href={`/gallery/${app.id}`}
+            className="hover:text-violet-300 hover:underline underline-offset-2"
+          >
+            {app.app_name}
+          </Link>
         </h3>
         {complexityLabel && (
           <span className="flex shrink-0 items-center gap-1 rounded border border-violet-800 bg-violet-950/50 px-1.5 py-0.5 font-mono text-[10px] text-violet-400">

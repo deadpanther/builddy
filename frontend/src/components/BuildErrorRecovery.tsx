@@ -1,8 +1,9 @@
 "use client";
 
 import { AlertTriangle, RefreshCw, Copy, Check, ArrowRight, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
+import { formatCheckpointStage, parseBuildFailedCheckpoint } from "@/lib/buildCheckpoint";
 import { ErrorDisplay } from "./ErrorDisplay";
 
 interface BuildErrorRecoveryProps {
@@ -24,6 +25,11 @@ export function BuildErrorRecovery({
 }: BuildErrorRecoveryProps) {
   const [copied, setCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
+
+  const checkpoint = useMemo(
+    () => parseBuildFailedCheckpoint(errorDetails),
+    [errorDetails]
+  );
 
   const handleCopyPrompt = () => {
     if (prompt) {
@@ -84,9 +90,19 @@ export function BuildErrorRecovery({
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-lg font-semibold text-red-200">Build Failed</h3>
-            <p className="mt-1 text-sm text-red-300/70">
-              Something went wrong during the build process. Here&apos;s what you can do:
+          <p className="mt-1 text-sm text-red-300/70">
+            Something went wrong during the build process. Here&apos;s what you can do:
+          </p>
+          {checkpoint && (
+            <p className="mt-3 rounded-md border border-amber-800/40 bg-amber-950/25 px-3 py-2 text-sm text-amber-100/90">
+              <span className="font-semibold text-amber-200">Last failed checkpoint:</span>{" "}
+              {formatCheckpointStage(checkpoint.stage)}
+              <span className="mt-1 block text-xs font-normal text-amber-200/70">
+                Retry resumes from this step and reuses saved artifacts (manifest, files, or HTML)
+                when the server can, instead of starting from zero.
+              </span>
             </p>
+          )}
 
           {/* Error details */}
           {(errorMessage || errorDetails) && (
@@ -112,7 +128,7 @@ export function BuildErrorRecovery({
                 className="flex items-center gap-2 rounded bg-red-800 px-4 py-2 font-medium text-sm text-red-100 transition-colors hover:bg-red-700 disabled:opacity-50"
               >
                 <RefreshCw className={`h-4 w-4 ${retrying ? "animate-spin" : ""}`} />
-                {retrying ? "Retrying..." : "Retry Build"}
+                {retrying ? "Retrying…" : checkpoint ? "Retry from checkpoint" : "Retry build"}
               </button>
             )}
 

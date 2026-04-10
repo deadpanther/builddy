@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     GLM_FALLBACK_MODEL: str = "glm-5"       # Fallback if primary is rate-limited
     GLM_VISION_MODEL: str = "glm-5v-turbo"
     GLM_IMAGE_MODEL: str = "cogView-4-250304"
+    # Cap simultaneous outbound GLM HTTP calls (chat, vision, image). Multiple
+    # Twitter mentions each spawn a full pipeline via create_task — without this
+    # they all hit the API at once and trigger HTTP 429. Set to 1 to serialize.
+    GLM_MAX_CONCURRENT_REQUESTS: int = 1
     ENABLE_THINKING: bool = True
     ENABLE_WEB_SEARCH: bool = True
     ENABLE_IMAGE_GEN: bool = True
@@ -37,6 +41,9 @@ class Settings(BaseSettings):
 
     # Twitter Scraper
     ENABLE_TWITTER_SCRAPER: bool = True
+    # How many @builddy mention builds may run pipelines at once (each is dozens of GLM calls).
+    # Set to 1 so a batch of mentions does not multiply rate limits on the same API key.
+    TWITTER_MAX_CONCURRENT_PIPELINES: int = 1
 
     # Post-processing agents
     ENABLE_AUTOPILOT: bool = True            # Auto-fix runtime errors via headless browser loop
@@ -50,6 +57,14 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = '["http://localhost:3000","http://localhost:3001"]'
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    # Public URL of this API (for acceptance checks / webhooks resolving /apps/... URLs)
+    PUBLIC_BACKEND_URL: str = "http://127.0.0.1:8000"
+    # Optional global webhook for all builds (build.webhook_url overrides)
+    DEFAULT_WEBHOOK_URL: str = ""
+    WEBHOOK_SIGNING_SECRET: str = ""
+    # Discord-style ingest (shared secret header)
+    DISCORD_INGEST_SECRET: str = ""
+    ENABLE_PIPELINE_QUALITY_CHECKS: bool = False  # reserved for heavier checks
 
     @property
     def cors_origins_list(self) -> list[str]:

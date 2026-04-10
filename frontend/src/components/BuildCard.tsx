@@ -1,16 +1,22 @@
+"use client";
+
 import Link from "next/link";
-import { ExternalLink, Clock, User, Image, Download, Layers, Trash2 } from "lucide-react";
+import { ExternalLink, Clock, User, Image, Download, Layers, Trash2, RefreshCw } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
-import { resolveDeployUrl, getDownloadUrl, deleteBuild, API_BASE } from "@/lib/api";
+import { resolveDeployUrl, getDownloadUrl, deleteBuild, retryBuild, API_BASE } from "@/lib/api";
+import { formatCheckpointStage, parseBuildFailedCheckpoint } from "@/lib/buildCheckpoint";
 import type { Build } from "@/lib/types";
 
 interface BuildCardProps {
   build: Build;
   onDeleted?: () => void;
+  /** Refetch feed after retry (same build id, new run) */
+  onUpdated?: () => void;
 }
 
-export function BuildCard({ build, onDeleted }: BuildCardProps) {
+export function BuildCard({ build, onDeleted, onUpdated }: BuildCardProps) {
   const isActive = ["pending", "planning", "coding", "reviewing", "deploying"].includes(build.status);
+  const failedCheckpoint = parseBuildFailedCheckpoint(build.error);
 
   return (
     <Link
@@ -80,6 +86,30 @@ export function BuildCard({ build, onDeleted }: BuildCardProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          {build.status === "failed" && (
+            <button
+              type="button"
+              title={
+                failedCheckpoint
+                  ? `Retry from last checkpoint: ${formatCheckpointStage(failedCheckpoint.stage)}`
+                  : "Retry from last failed step (reuses saved work when possible)"
+              }
+              onClick={async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                  await retryBuild(build.id);
+                  onUpdated?.();
+                } catch {
+                  /* keep card */
+                }
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 font-mono text-[10px] text-amber-300 transition-colors hover:bg-amber-500/25"
+            >
+              <RefreshCw className="h-3 w-3" />
+              {failedCheckpoint ? "Retry checkpoint" : "Retry"}
+            </button>
+          )}
           {resolveDeployUrl(build.deploy_url) && (
             <a
               href={resolveDeployUrl(build.deploy_url)!}

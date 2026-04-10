@@ -122,10 +122,26 @@ class TestGalleryEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["app_name"] == "DetailApp"
-        assert data["generated_code"] == "<html>Detail</html>"
+        assert data["status"] == "deployed"
+        assert "generated_code" not in data
 
     @pytest.mark.asyncio
     async def test_gallery_detail_not_found(self, client):
         """Test getting non-existent build from gallery."""
         resp = await client.get("/api/gallery/nonexistent-id")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_gallery_detail_not_deployed(self, client, db_session):
+        """Gallery detail is only for deployed apps."""
+        build = Build(
+            prompt="Wip",
+            status="coding",
+            app_name="WipApp",
+            deploy_url=None,
+        )
+        db_session.add(build)
+        db_session.commit()
+        db_session.refresh(build)
+        resp = await client.get(f"/api/gallery/{build.id}")
         assert resp.status_code == 404

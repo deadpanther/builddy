@@ -17,6 +17,32 @@ interface SubmitBuildProps {
   onBuildCreated?: (buildId: string) => void;
 }
 
+function buildAdvancedExtras(
+  webhookUrl: string,
+  acceptancePaths: string,
+  extraJson: string,
+  setError: (s: string) => void
+): { build_options?: Record<string, unknown>; webhook_url?: string } | null {
+  const paths = acceptancePaths
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const opts: Record<string, unknown> = {};
+  if (paths.length) opts.acceptance_paths = paths;
+  if (extraJson.trim()) {
+    try {
+      Object.assign(opts, JSON.parse(extraJson) as Record<string, unknown>);
+    } catch {
+      setError("Advanced: invalid JSON object");
+      return null;
+    }
+  }
+  return {
+    build_options: Object.keys(opts).length ? opts : undefined,
+    webhook_url: webhookUrl.trim() || undefined,
+  };
+}
+
 export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
   const [mode, setMode] = useState<"text" | "screenshot">("text");
   const [prompt, setPrompt] = useState("");
@@ -27,6 +53,11 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
   const [images, setImages] = useState<{ base64: string; preview: string }[]>([]);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [acceptancePaths, setAcceptancePaths] = useState("");
+  const [extraJson, setExtraJson] = useState("");
 
   const handleFiles = useCallback((files: FileList | File[]) => {
     const fileArr = Array.from(files);
@@ -67,7 +98,12 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
     setSuccess("");
 
     try {
-      const build = await createBuild(trimmed);
+      const adv = buildAdvancedExtras(webhookUrl, acceptancePaths, extraJson, setError);
+      if (adv === null) {
+        setLoading(false);
+        return;
+      }
+      const build = await createBuild(trimmed, adv);
       setPrompt("");
       setSuccess(build.app_name ?? "Build");
       onBuildCreated?.(build.id);
@@ -87,9 +123,14 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
     setSuccess("");
 
     try {
+      const adv = buildAdvancedExtras(webhookUrl, acceptancePaths, extraJson, setError);
+      if (adv === null) {
+        setLoading(false);
+        return;
+      }
       const b64List = images.map((img) => img.base64);
       const imagePayload = b64List.length === 1 ? b64List[0] : b64List;
-      const build = await createBuildFromImage(imagePayload, prompt);
+      const build = await createBuildFromImage(imagePayload, prompt, adv);
       setImages([]);
       setPrompt("");
       setSuccess(build.app_name ?? "Screenshot Build");
@@ -139,6 +180,49 @@ export function SubmitBuild({ onBuildCreated }: SubmitBuildProps) {
           Screenshot
         </button>
       </div>
+
+      <button
+        type="button"
+        onClick={() => setShowAdvanced((v) => !v)}
+        className="mb-3 w-full rounded-lg border border-stroke bg-surface-100 py-2 font-mono text-[10px] text-zinc-500 hover:text-zinc-300"
+      >
+        {showAdvanced ? "Hide advanced" : "Advanced: webhooks & acceptance URLs"}
+      </button>
+
+      {showAdvanced && (
+        <div className="mb-4 space-y-2 rounded-lg border border-stroke bg-surface-100/50 p-3">
+          <div>
+            <label className="mb-1 block font-mono text-[10px] text-zinc-500">Webhook URL (optional)</label>
+            <input
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+              placeholder="https://example.com/hooks/builddy"
+              className="w-full rounded border border-stroke bg-surface px-2 py-1.5 font-mono text-xs text-white"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] text-zinc-500">
+              Paths that must return 200 (comma-separated, after deploy)
+            </label>
+            <input
+              value={acceptancePaths}
+              onChange={(e) => setAcceptancePaths(e.target.value)}
+              placeholder="/, /api/health"
+              className="w-full rounded border border-stroke bg-surface px-2 py-1.5 font-mono text-xs text-white"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] text-zinc-500">Extra build_options JSON object (optional)</label>
+            <textarea
+              value={extraJson}
+              onChange={(e) => setExtraJson(e.target.value)}
+              placeholder='{"pwa": true}'
+              rows={2}
+              className="w-full rounded border border-stroke bg-surface px-2 py-1.5 font-mono text-xs text-white"
+            />
+          </div>
+        </div>
+      )}
 
       {mode === "text" ? (
         /* ── Text mode ────────────────────────────── */

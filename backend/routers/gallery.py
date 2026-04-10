@@ -46,9 +46,9 @@ async def gallery_list(
 
 @router.get("/{build_id}")
 async def gallery_detail(build_id: str, session: Session = Depends(get_session)):
-    """Single app details for gallery."""
+    """Single deployed app for gallery / OG metadata (no source code)."""
     build = session.get(Build, build_id)
-    if not build:
+    if not build or build.status != "deployed":
         raise HTTPException(status_code=404, detail="Build not found")
     return {
         "id": build.id,
@@ -57,7 +57,10 @@ async def gallery_detail(build_id: str, session: Session = Depends(get_session))
         "twitter_username": build.twitter_username,
         "tweet_text": build.tweet_text,
         "deploy_url": build.deploy_url,
+        "deploy_external_url": build.deploy_external_url,
         "status": build.status,
-        "generated_code": build.generated_code,
+        "thumbnail_url": build.thumbnail_url,
+        "remix_count": build.remix_count,
+        "complexity": build.complexity,
         "deployed_at": str(build.deployed_at) if build.deployed_at else None,
     }

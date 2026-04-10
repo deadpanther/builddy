@@ -47,6 +47,10 @@ export interface Build {
   created_at: string;
   updated_at?: string;
   deployed_at?: string;
+  build_options?: string;
+  quality_status?: string;
+  webhook_url?: string;
+  workspace_id?: string | null;
 }
 
 export interface FileManifestEntry {
@@ -96,6 +100,7 @@ export interface GalleryApp {
   remix_count?: number;
   thumbnail_url?: string;
   deployed_at: string;
+  deploy_external_url?: string | null;
 }
 
 // Autopsy types (existing)

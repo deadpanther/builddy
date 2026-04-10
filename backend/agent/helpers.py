@@ -45,6 +45,9 @@ def _add_step(build_id: str, step: str):
             existing = json.loads(build.steps) if build.steps else []
             existing.append(step)
             build.steps = json.dumps(existing)
+            ev_existing = json.loads(build.step_events) if build.step_events else []
+            ev_existing.append({"m": step, "t": datetime.now(UTC).isoformat()})
+            build.step_events = json.dumps(ev_existing)
             build.updated_at = datetime.now(UTC)
             session.add(build)
             session.commit()

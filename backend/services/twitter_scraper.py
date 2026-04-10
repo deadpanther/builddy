@@ -29,7 +29,7 @@ BRAVE_PATH = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
 # Backend API base
 BACKEND_BASE = f"http://127.0.0.1:{settings.PORT}"
 
-POLL_INTERVAL = 45  # seconds between checks
+POLL_INTERVAL = 120  # seconds between checks (was 45 — reduced to avoid log noise)
 MENTIONS_URL = "https://x.com/notifications/mentions"
 LOGIN_URL = "https://x.com/i/flow/login"
 
@@ -104,7 +104,7 @@ class TwitterMentionScraper:
 
             # Find tweet articles on the mentions page
             articles = await self._page.query_selector_all('article[data-testid="tweet"]')
-            logger.info("Found %d tweet articles on mentions page", len(articles))
+            logger.debug("Found %d tweet articles on mentions page", len(articles))
 
             for article in articles[:15]:  # only check latest 15
                 try:
@@ -254,6 +254,9 @@ class TwitterMentionScraper:
 
             while self._running:
                 try:
+                    # Scraping uses Playwright + httpx only — no GLM. Each successful ingest
+                    # starts a background pipeline on the server; many new mentions in one poll
+                    # means many concurrent pipelines unless GLM_MAX_CONCURRENT_REQUESTS caps API use.
                     mentions = await self._scrape_mentions()
                     for m in mentions:
                         self._seen_tweet_ids.add(m["tweet_id"])

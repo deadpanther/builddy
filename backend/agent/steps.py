@@ -12,6 +12,7 @@ from agent.helpers import (
     _strip_fences,
     _update_build,
 )
+from database import engine
 from agent.llm import chat, chat_with_reasoning, generate_image
 from agent.prompts import (
     CODE_SYSTEM,
@@ -21,6 +22,7 @@ from agent.prompts import (
     REVIEW_SYSTEM,
 )
 from config import settings
+from models import Build
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +34,26 @@ async def parse_request(build_id: str, tweet_text: str) -> dict:
     _update_build(build_id, status="planning")
     _add_step(build_id, "Parsing request with GLM 5.1...")
 
+    constraints_block = ""
+    from sqlmodel import Session
+
+    with Session(engine) as session:
+        b = session.get(Build, build_id)
+        if b and b.build_options:
+            try:
+                opts = json.loads(b.build_options)
+                if isinstance(opts, dict) and opts:
+                    constraints_block = (
+                        "\n\nUser constraints and options (must respect):\n"
+                        + json.dumps(opts, indent=2)[:8000]
+                    )
+            except json.JSONDecodeError:
+                pass
+
     result = await chat(
         messages=[
             {"role": "system", "content": PARSE_SYSTEM},
-            {"role": "user", "content": f"Parse this request:\n\n{tweet_text}"},
+            {"role": "user", "content": f"Parse this request:\n\n{tweet_text}{constraints_block}"},
         ],
         temperature=0.3,
     )
@@ -220,6 +238,11 @@ async def generate_code(build_id: str, prompt: str, plan: str) -> str:
         code = _strip_fences(code_text)
 
     if not code:
+        _add_step(
+            build_id,
+            "Hint: empty code after fallbacks often means GLM rate limits (HTTP 429), quota, or key issues — "
+            "check server logs and .env; try GLM_MAX_CONCURRENT_REQUESTS=1 or wait before retry.",
+        )
         raise ValueError("GLM returned empty code after all retries — cannot proceed")
 
     _update_build(build_id, generated_code=code)

@@ -36,6 +36,11 @@ def _migrate_new_columns():
         ("builds", "deploy_provider", "TEXT"),
         ("builds", "deploy_external_url", "TEXT"),
         ("builds", "deploy_status", "TEXT"),
+        ("builds", "build_options", "TEXT"),
+        ("builds", "quality_status", "TEXT"),
+        ("builds", "webhook_url", "TEXT"),
+        ("builds", "step_events", "TEXT"),
+        ("builds", "workspace_id", "TEXT"),
     ]
     with Session(engine) as session:
         for table, column, col_type in new_columns:

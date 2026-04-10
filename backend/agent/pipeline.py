@@ -35,7 +35,7 @@ from agent.multifile import (
     modify_existing_file,
     plan_manifest,
 )
-from agent.prompts import CODE_SYSTEM, MODIFY_SYSTEM, SCREENSHOT_SYSTEM
+from agent.prompts import CODE_SYSTEM, MODIFY_SYSTEM, QUICK_MODIFY_SYSTEM, SCREENSHOT_SYSTEM
 from agent.steps import (
     generate_code,
     generate_thumbnail,
@@ -48,6 +48,7 @@ from config import settings
 from database import engine
 from models import Build
 from services.deployer import create_project_zip, deploy_html, deploy_project, deploy_test_file
+from services.post_deploy_hooks import schedule_post_deploy_hooks
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,7 @@ async def run_fullstack_pipeline(build_id: str, prompt: str, classification: dic
     )
     _add_step(build_id, f"Deployed at {deploy_url}")
     _add_step(build_id, f"Download zip: {zip_url}")
+    schedule_post_deploy_hooks(build_id, deploy_url)
 
     return deploy_url
 
@@ -257,6 +259,7 @@ async def run_modify_fullstack_pipeline(
         )
         _add_step(build_id, f"Deployed at {deploy_url}")
         _add_step(build_id, f"Download zip: {zip_url}")
+        schedule_post_deploy_hooks(build_id, deploy_url)
 
         # Thumbnail
         asyncio.create_task(_safe_thumbnail(build_id, modification))
@@ -351,7 +354,7 @@ async def _retry_simple(build_id: str, prompt: str, failed_at: str):
         code = strip_fences(code_text)
 
         if not code:
-            # Last resort: try fallback model
+            # Try fallback model
             _add_step(build_id, "Fast model empty — trying fallback model...")
             code_text = await chat(
                 messages=[
@@ -367,6 +370,28 @@ async def _retry_simple(build_id: str, prompt: str, failed_at: str):
             code = strip_fences(code_text)
 
         if not code:
+            # Last resort: try the primary model (glm-5.1) — may have separate quota
+            _add_step(build_id, "Fallback also empty — trying primary model (glm-5.1)...")
+            await asyncio.sleep(10)  # Wait before hitting primary
+            code_text = await chat(
+                messages=[
+                    {"role": "system", "content": CODE_SYSTEM},
+                    {"role": "user", "content": f"Build a complete single-file HTML app for: {prompt}\n\nWrap in ```html fences."},
+                ],
+                temperature=0.7,
+                max_tokens=8192,
+                retries=2,
+                thinking=False,
+                model=settings.GLM_MODEL,
+            )
+            code = strip_fences(code_text)
+
+        if not code:
+            _add_step(
+                build_id,
+                "All models rate-limited. Wait a few minutes and retry, "
+                "or set GLM_MAX_CONCURRENT_REQUESTS=1 to reduce load.",
+            )
             raise ValueError("All models returned empty code — cannot proceed")
 
         _update_build(build_id, generated_code=code)
@@ -394,6 +419,7 @@ async def _retry_simple(build_id: str, prompt: str, failed_at: str):
         }),
     )
     _add_step(build_id, f"Deployed at {deploy_url}")
+    schedule_post_deploy_hooks(build_id, deploy_url)
 
 
 async def _retry_fullstack(build_id: str, prompt: str, failed_at: str):
@@ -476,6 +502,7 @@ async def _retry_fullstack(build_id: str, prompt: str, failed_at: str):
     )
     _add_step(build_id, f"Deployed at {deploy_url}")
     _add_step(build_id, f"Download zip: {zip_url}")
+    schedule_post_deploy_hooks(build_id, deploy_url)
 
 
 async def run_pipeline(build_id: str):
@@ -492,11 +519,22 @@ async def run_pipeline(build_id: str):
         parsed = await parse_request(build_id, tweet_text)
         prompt = parsed.get("prompt", tweet_text)
 
+        # Circuit breaker: if parse returned defaults, API is likely rate-limited.
+        # Skip expensive agents (PRD, Design, QA, Polish) and go direct to code gen.
+        api_degraded = (
+            parsed.get("app_name") == "my-app"
+            and parsed.get("aesthetic") == "minimal"
+            and not parsed.get("delight_features")
+        )
+        if api_degraded:
+            _add_step(build_id, "API appears rate-limited — using fast pipeline (skip PRD/Design/QA)")
+            logger.warning("Build %s: circuit breaker triggered, using fast pipeline", build_id)
+
         # Step 2: Classify complexity
         classification = await classify_complexity(build_id, prompt)
         complexity = classification.get("complexity", "simple")
 
-        if complexity in ("standard", "fullstack"):
+        if complexity in ("standard", "fullstack") and not api_degraded:
             # ── Multi-file pipeline ──
             logger.info("Build %s using %s pipeline", build_id, complexity)
 
@@ -519,39 +557,47 @@ async def run_pipeline(build_id: str):
             asyncio.create_task(_safe_thumbnail(build_id, prompt))
             logger.info("Build %s completed (fullstack): %s", build_id, deploy_url)
         else:
-            # ── Simple single-file pipeline with multi-agent quality ──
-            logger.info("Build %s using enhanced simple pipeline", build_id)
+            # ── Simple single-file pipeline ──
+            # When api_degraded, skip PRD/Design agents to save API calls
+            if api_degraded:
+                logger.info("Build %s using fast simple pipeline (api degraded)", build_id)
+                prd = {"user_stories": [], "edge_cases": [], "delight_features": []}
+                plan_prompt = prompt
+            else:
+                logger.info("Build %s using enhanced simple pipeline", build_id)
+                # PM Agent: Write PRD with acceptance criteria
+                prd = await write_prd(build_id, prompt)
+                # Design Agent: Create visual design system
+                design = await create_design_system(build_id, prompt, prd)
+                plan_prompt = (
+                    f"{prompt}\n\n"
+                    f"PRD: {json.dumps(prd, indent=2)[:3000]}\n\n"
+                    f"Design System: {json.dumps(design, indent=2)[:2000]}"
+                )
 
-            # PM Agent: Write PRD with acceptance criteria
-            prd = await write_prd(build_id, prompt)
-
-            # Design Agent: Create visual design system
-            design = await create_design_system(build_id, prompt, prd)
-
-            # Plan (with web search + thinking + PRD + design context)
-            plan_prompt = (
-                f"{prompt}\n\n"
-                f"PRD: {json.dumps(prd, indent=2)[:3000]}\n\n"
-                f"Design System: {json.dumps(design, indent=2)[:2000]}"
-            )
+            # Plan
             plan = await plan_app(build_id, plan_prompt)
 
-            # Generate code (with thinking + web search + component library)
+            # Generate code
             code = await generate_code(build_id, plan_prompt, plan)
 
-            # QA Agent: Validate against PRD acceptance criteria
-            code = await qa_validate(build_id, code, prd)
+            # Quality agents — skip when API is degraded to save quota
+            if not api_degraded:
+                # QA Agent: Validate against PRD acceptance criteria
+                code = await qa_validate(build_id, code, prd)
 
-            # Polish Agent: Animations, empty states, dark mode, micro-interactions
-            code = await polish_pass(build_id, code)
+                # Polish Agent: Animations, empty states, dark mode, micro-interactions
+                code = await polish_pass(build_id, code)
 
-            # Visual Feedback Loop: Browser screenshot -> GLM-5V fix
-            code = await visual_validate(build_id, code)
+                # Visual Feedback Loop: Browser screenshot -> GLM-5V fix
+                code = await visual_validate(build_id, code)
+            else:
+                _add_step(build_id, "Skipping QA/Polish/Visual agents (rate-limited mode)")
 
             # Autopilot: Run in headless browser, detect errors, auto-fix
             app_name = parsed.get("app_name", "App")
 
-            if settings.ENABLE_AUTOPILOT:
+            if settings.ENABLE_AUTOPILOT and not api_degraded:
                 _add_step(build_id, "Running autopilot error detection...")
 
                 def _on_autopilot_iteration(iteration: int, errors_found: int, screenshot_available: bool):
@@ -600,6 +646,7 @@ async def run_pipeline(build_id: str):
                 }),
             )
             _add_step(build_id, f"Deployed at {deploy_url}")
+            schedule_post_deploy_hooks(build_id, deploy_url)
 
             # Generate thumbnail (non-blocking)
             asyncio.create_task(_safe_thumbnail(build_id, prompt))
@@ -702,6 +749,7 @@ async def run_screenshot_pipeline(build_id: str, images_base64: list[str], text_
             deployed_at=datetime.now(UTC),
         )
         _add_step(build_id, f"Deployed at {deploy_url}")
+        schedule_post_deploy_hooks(build_id, deploy_url)
 
         # Thumbnail
         desc = text_prompt or "web application from screenshot"
@@ -718,7 +766,7 @@ async def run_screenshot_pipeline(build_id: str, images_base64: list[str], text_
         _add_step(build_id, f"Build failed at {failed_at}: {str(e)}")
 
 
-async def run_modify_pipeline(build_id: str, original_code: str, modification: str):
+async def run_modify_pipeline(build_id: str, original_code: str, modification: str, *, quick: bool = False):
     """Run a modification pipeline — takes existing code and applies changes."""
     try:
         _update_build(build_id, status="coding")
@@ -726,13 +774,17 @@ async def run_modify_pipeline(build_id: str, original_code: str, modification: s
 
         await asyncio.sleep(1)
 
+        system = QUICK_MODIFY_SYSTEM if quick else MODIFY_SYSTEM
+        code_ctx = original_code if len(original_code) < 120_000 else original_code[-120_000:]
+        max_tok = 8192 if quick else 16384
+
         result = await chat_with_reasoning(
             messages=[
-                {"role": "system", "content": MODIFY_SYSTEM},
-                {"role": "user", "content": f"Requested change: {modification}\n\nCurrent code:\n```html\n{original_code}\n```"},
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"Requested change: {modification}\n\nCurrent code:\n```html\n{code_ctx}\n```"},
             ],
             temperature=0.5,
-            max_tokens=16384,
+            max_tokens=max_tok,
             retries=2,
         )
 
@@ -777,6 +829,7 @@ async def run_modify_pipeline(build_id: str, original_code: str, modification: s
             deployed_at=datetime.now(UTC),
         )
         _add_step(build_id, f"Deployed at {deploy_url}")
+        schedule_post_deploy_hooks(build_id, deploy_url)
         logger.info("Modification %s completed: %s", build_id, deploy_url)
 
     except Exception as e:

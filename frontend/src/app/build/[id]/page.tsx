@@ -13,6 +13,7 @@ import { CodePreview } from "@/components/CodePreview";
 import { CodeEditor } from "@/components/CodeEditor";
 import { FileExplorer } from "@/components/FileExplorer";
 import { VersionHistory } from "@/components/VersionHistory";
+import { BuildErrorRecovery } from "@/components/BuildErrorRecovery";
 import { cn } from "@/lib/utils";
 import type { Build, ReasoningEntry, TechStack, VersionEntry } from "@/lib/types";
 
@@ -822,37 +823,29 @@ export default function BuildDetailPage() {
 
           {/* Error + Retry (failed builds) */}
           {build.status === "failed" && build.error && (
-            <div className="rounded-lg border border-red-900 bg-red-950/30 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="mb-1 font-mono text-xs uppercase tracking-wider text-red-500">
-                    Build Failed
-                  </p>
-                  <p className="font-mono text-sm text-red-400">
-                    {build.error.replace(/^\[\w+\]\s*/, "")}
-                  </p>
-                </div>
-                <button
-                  onClick={async () => {
-                    try {
-                      await retryBuild(build.id);
-                      if (!intervalRef.current) {
-                        intervalRef.current = setInterval(() => {
-                          getBuild(build.id).then(setBuild).catch(() => {});
-                        }, 3000);
-                      }
-                    } catch {}
-                  }}
-                  className="flex shrink-0 items-center gap-2 rounded border border-amber-700 bg-amber-900/40 px-4 py-2 font-semibold text-sm text-amber-300 transition-colors hover:bg-amber-900/70"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Retry
-                </button>
-              </div>
-              <p className="mt-2 font-mono text-[10px] text-red-600">
-                Retry resumes from the last successful step — no work is lost.
-              </p>
-            </div>
+            <BuildErrorRecovery
+              buildId={build.id}
+              errorMessage={build.error.replace(/^\[\w+\]\s*/, "")}
+              errorDetails={build.error}
+              prompt={build.prompt || build.tweet_text}
+              onRetry={async () => {
+                try {
+                  await retryBuild(build.id);
+                  if (!intervalRef.current) {
+                    intervalRef.current = setInterval(() => {
+                      getBuild(build.id).then(setBuild).catch(() => {});
+                    }, 3000);
+                  }
+                } catch {}
+              }}
+              onDelete={async () => {
+                try {
+                  const { deleteBuild } = await import("@/lib/api");
+                  await deleteBuild(build.id);
+                  router.push("/");
+                } catch {}
+              }}
+            />
           )}
 
           {/* Stuck build — Force Retry (shows for active builds after 90 seconds) */}

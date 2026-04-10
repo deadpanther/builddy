@@ -17,6 +17,15 @@ logger = logging.getLogger(__name__)
 GITHUB_API = "https://api.github.com"
 
 
+async def export_build_files_to_github(
+    build_id: str,
+    project_files: dict[str, str],
+    app_name: str,
+) -> str:
+    """Push files to a new GitHub repository; returns the repo HTTPS URL."""
+    return await _push_to_github(build_id, project_files, app_name)
+
+
 async def deploy_to_cloud(
     build_id: str,
     provider: str,
@@ -309,3 +318,114 @@ def _cloud_instructions_with_repo(
         "message": f"GitHub repo created at {repo_url}. Deploy manually.",
         "repo_url": repo_url,
     }
+
+
+async def export_build_files_to_github_pr(
+    build_id: str,
+    project_files: dict[str, str],
+    app_name: str,
+) -> dict[str, str]:
+    """Create repo with README, push files on a feature branch, open a PR to the default branch."""
+    safe_name = f"{app_name}-{build_id[:8]}"
+    headers = {
+        "Authorization": f"token {settings.GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    org = settings.GITHUB_ORG
+    if org:
+        create_url = f"{GITHUB_API}/orgs/{org}/repos"
+        owner = org
+    else:
+        create_url = f"{GITHUB_API}/user/repos"
+        owner = ""
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            create_url,
+            headers=headers,
+            json={
+                "name": safe_name,
+                "description": f"Builddy app: {app_name}",
+                "private": False,
+                "auto_init": True,
+            },
+        )
+        if resp.status_code >= 400 and resp.status_code != 422:
+            raise RuntimeError(f"GitHub repo creation failed ({resp.status_code}): {resp.text}")
+
+        if not org:
+            user_resp = await client.get(f"{GITHUB_API}/user", headers=headers)
+            owner = user_resp.json().get("login", "builddy")
+
+        repo_url = f"https://github.com/{owner}/{safe_name}"
+        clone_url = f"https://x-access-token:{settings.GITHUB_TOKEN}@github.com/{owner}/{safe_name}.git"
+
+        info = await client.get(f"{GITHUB_API}/repos/{owner}/{safe_name}", headers=headers)
+        if info.status_code >= 400:
+            raise RuntimeError(f"Could not read repo metadata: {info.text}")
+        default_branch = info.json().get("default_branch") or "main"
+
+    branch_name = f"builddy-export-{build_id[:8]}"
+    await _git_clone_push_branch(clone_url, project_files, app_name, branch_name)
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        pr_resp = await client.post(
+            f"{GITHUB_API}/repos/{owner}/{safe_name}/pulls",
+            headers=headers,
+            json={
+                "title": f"Builddy export: {app_name}",
+                "head": branch_name,
+                "base": default_branch,
+                "body": f"Automated export from build `{build_id}`.",
+            },
+        )
+        if pr_resp.status_code >= 400:
+            raise RuntimeError(f"GitHub PR creation failed ({pr_resp.status_code}): {pr_resp.text}")
+        pr_data = pr_resp.json()
+
+    return {
+        "repo_url": repo_url,
+        "pr_url": pr_data.get("html_url", ""),
+        "pr_number": str(pr_data.get("number", "")),
+    }
+
+
+async def _git_clone_push_branch(
+    clone_url: str,
+    project_files: dict[str, str],
+    app_name: str,
+    branch_name: str,
+) -> None:
+    tmp_dir = tempfile.mkdtemp(prefix="builddy-pr-")
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _run(cmd: list[str]) -> None:
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            )
+
+        await loop.run_in_executor(
+            None,
+            lambda: _run(["git", "clone", "--depth", "1", clone_url, tmp_dir]),
+        )
+
+        for filepath, content in project_files.items():
+            full_path = Path(tmp_dir) / filepath
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_text(content, encoding="utf-8")
+
+        cmds = [
+            ["git", "-C", tmp_dir, "checkout", "-b", branch_name],
+            ["git", "-C", tmp_dir, "add", "-A"],
+            ["git", "-C", tmp_dir, "commit", "-m", f"Export app files: {app_name}"],
+            ["git", "-C", tmp_dir, "push", "-u", "origin", branch_name],
+        ]
+        for cmd in cmds:
+            await loop.run_in_executor(None, lambda c=cmd: _run(c))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

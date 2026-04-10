@@ -1,0 +1,20 @@
+[
+  {
+    "slug": "landing",
+    "name": "Marketing landing",
+    "description": "Hero, features grid, CTA, footer — single page.",
+    "prompt": "Build a polished marketing landing page with hero headline, subtext, primary CTA button, three feature cards with icons, testimonial quote section, pricing teaser, and footer with links. Use Tailwind CDN, dark mode toggle, smooth scroll, and responsive layout."
+  },
+  {
+    "slug": "dashboard",
+    "name": "Analytics dashboard",
+    "description": "Sidebar, KPI cards, simple chart placeholder.",
+    "prompt": "Build a single-page analytics dashboard UI with collapsible sidebar, top bar with search, four KPI stat cards, a placeholder area for a line chart (CSS only), and a recent activity table with fake data. Tailwind CDN, dark mode, responsive."
+  },
+  {
+    "slug": "waitlist",
+    "name": "Waitlist signup",
+    "description": "Email capture + social proof.",
+    "prompt": "Build a waitlist page with bold headline, short value prop, email input with validation message, submit button with loading state, and fake social proof (e.g. 2,400+ on the list). Tailwind CDN, dark mode, mobile-first."
+  }
+]
