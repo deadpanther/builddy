@@ -169,12 +169,17 @@ class TwitterMentionScraper:
             for sel in ['[role="button"]:has-text("Next")', 'button:has-text("Next")', '[data-testid="LoginForm_Next_Button"]']:
                 next_btn = await self._page.query_selector(sel)
                 if next_btn:
+                    logger.info("Found Next button with selector: %s", sel)
                     break
             if next_btn:
                 await next_btn.click()
+                logger.info("Clicked Next button")
             else:
+                logger.info("No Next button found, pressing Enter")
                 await self._page.keyboard.press("Enter")
-            await self._page.wait_for_timeout(3000)
+            await self._page.wait_for_timeout(4000)
+
+            logger.info("After Next — URL: %s", self._page.url)
 
             # Step 2: Check for unusual activity / phone verification challenge
             challenge_input = await self._page.query_selector(
@@ -190,18 +195,30 @@ class TwitterMentionScraper:
                     await verify_btn.click()
                 await self._page.wait_for_timeout(3000)
 
-            # Step 3: Enter password — try multiple selectors
+            # Step 3: Enter password — wait with retries for the page to transition
             password_input = None
-            for sel in ['input[name="password"]', 'input[type="password"]', 'input[autocomplete="current-password"]']:
-                try:
-                    password_input = await self._page.wait_for_selector(sel, timeout=5000, state="visible")
-                    if password_input:
-                        break
-                except Exception:
-                    continue
+            password_selectors = ['input[name="password"]', 'input[type="password"]', 'input[autocomplete="current-password"]']
+            for attempt in range(3):  # retry up to 3 times (12s total)
+                for sel in password_selectors:
+                    try:
+                        password_input = await self._page.wait_for_selector(sel, timeout=4000, state="visible")
+                        if password_input:
+                            logger.info("Found password input with selector: %s (attempt %d)", sel, attempt + 1)
+                            break
+                    except Exception:
+                        continue
+                if password_input:
+                    break
+                logger.info("Password field not found yet (attempt %d/3), waiting...", attempt + 1)
+                await self._page.wait_for_timeout(2000)
 
             if not password_input:
-                logger.error("Could not find password field. Current URL: %s", self._page.url)
+                # Log page content for debugging
+                page_text = await self._page.inner_text("body")
+                logger.error(
+                    "Could not find password field. URL: %s | Page text (first 500 chars): %s",
+                    self._page.url, page_text[:500],
+                )
                 return False
 
             await password_input.click()
