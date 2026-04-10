@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-STEP_TIMEOUT = 120      # 2 minutes for thinking steps (PRD, plan, QA, etc.)
-FILE_TIMEOUT = 180      # 3 minutes for file generation
+STEP_TIMEOUT = 180      # 3 minutes for thinking steps (PRD, plan, QA, etc.)
+CODE_TIMEOUT = 300      # 5 minutes for code generation (largest output)
+FILE_TIMEOUT = 240      # 4 minutes for file generation
 VISUAL_TIMEOUT = 60     # 1 minute for visual validation
 
 

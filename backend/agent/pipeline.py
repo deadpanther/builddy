@@ -563,8 +563,11 @@ async def run_pipeline(build_id: str):
             )
             plan = await plan_app(build_id, plan_prompt)
 
-            # Generate code (with thinking + web search + component library)
+            # Generate code with live streaming
             code = await generate_code(build_id, plan_prompt, plan)
+
+            # Store as generated_files so the Files tab works for simple apps too
+            _update_build(build_id, generated_code=code, generated_files=json.dumps({"index.html": code}))
 
             # QA Agent: Validate against PRD acceptance criteria
             code = await qa_validate(build_id, code, prd)

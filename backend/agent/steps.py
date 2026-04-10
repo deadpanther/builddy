@@ -13,7 +13,7 @@ from agent.helpers import (
     _update_build,
 )
 from database import engine
-from agent.llm import chat, chat_with_reasoning, generate_image
+from agent.llm import chat, chat_streaming, chat_with_reasoning, generate_image
 from agent.prompts import (
     CODE_SYSTEM,
     IMAGE_PROMPT_TEMPLATE,
@@ -146,11 +146,13 @@ async def plan_app(build_id: str, prompt: str) -> str:
 
 
 async def generate_code(build_id: str, prompt: str, plan: str) -> str:
-    """Step 3: Generate the complete HTML/CSS/JS code with thinking mode + web search."""
-    _update_build(build_id, status="coding")
-    _add_step(build_id, "Generating code with GLM 5.1 (web search + thinking)...")
+    """Step 3: Generate code with LIVE STREAMING so users see code appear in real time."""
+    from agent.helpers import CODE_TIMEOUT
+    from services.event_bus import publish as _pub
 
-    # Keep prompt lean — component library is in CODE_SYSTEM, don't duplicate
+    _update_build(build_id, status="coding")
+    _add_step(build_id, "Generating code with GLM 5.1...")
+
     user_content = (
         f"Build this app: {prompt}\n\n"
         f"Follow this architecture plan:\n{plan}\n\n"
@@ -159,90 +161,96 @@ async def generate_code(build_id: str, prompt: str, plan: str) -> str:
         f"Wrap your code in ```html fences."
     )
 
-    # Enable web search so GLM can look up Tailwind patterns, best practices, etc.
-    tools = None
-    if settings.ENABLE_WEB_SEARCH:
-        tools = [
-            {
-                "type": "web_search",
-                "web_search": {
-                    "enable": "True",
-                    "search_engine": "search-prime",
-                    "search_result": "True",
-                    "count": "3",
-                    "search_recency_filter": "noLimit",
-                },
-            }
-        ]
-        _add_step(build_id, "[skill:web-search] Searching for UI patterns and best practices...")
+    # Publish that we're starting to stream the file
+    _pub(build_id, "file_streaming_start", {"file_path": "index.html"})
 
+    _last_publish_len = 0
+
+    async def _on_chunk(accumulated: str):
+        nonlocal _last_publish_len
+        if len(accumulated) - _last_publish_len >= 300:
+            _pub(build_id, "file_chunk", {
+                "file_path": "index.html",
+                "content": accumulated,
+                "done": False,
+            })
+            _last_publish_len = len(accumulated)
+
+    # Primary: streaming with fast model (most reliable + users see live output)
+    code = ""
     try:
-        result = await asyncio.wait_for(
-            chat_with_reasoning(
+        raw = await asyncio.wait_for(
+            chat_streaming(
+                messages=[
+                    {"role": "system", "content": CODE_SYSTEM},
+                    {"role": "user", "content": user_content},
+                ],
+                on_chunk=_on_chunk,
+                temperature=0.7,
+                max_tokens=16384,
+                model=settings.GLM_FAST_MODEL,
+            ),
+            timeout=CODE_TIMEOUT,
+        )
+        code = _strip_fences(raw.strip())
+    except TimeoutError:
+        _add_step(build_id, "Code generation timed out — trying fallback...")
+
+    if not code:
+        # Fallback 1: non-streaming with thinking (deeper reasoning)
+        _add_step(build_id, "Retrying with thinking mode...")
+        try:
+            result = await asyncio.wait_for(
+                chat_with_reasoning(
+                    messages=[
+                        {"role": "system", "content": CODE_SYSTEM},
+                        {"role": "user", "content": user_content},
+                    ],
+                    temperature=0.7,
+                    max_tokens=16384,
+                    retries=2,
+                ),
+                timeout=CODE_TIMEOUT,
+            )
+            code = _strip_fences(result["content"])
+            reasoning = result["reasoning"]
+            if reasoning:
+                _add_reasoning(build_id, "coding", reasoning)
+                _add_step(build_id, f"[thinking] GLM reasoned through implementation ({len(reasoning)} chars)")
+        except TimeoutError:
+            _add_step(build_id, "Thinking mode also timed out...")
+
+    if not code:
+        # Fallback 2: fallback model, no thinking
+        _add_step(build_id, "Retrying with fallback model...")
+        try:
+            code_text = await chat(
                 messages=[
                     {"role": "system", "content": CODE_SYSTEM},
                     {"role": "user", "content": user_content},
                 ],
                 temperature=0.7,
-                max_tokens=16384,
+                max_tokens=8192,
                 retries=2,
-                tools=tools,
-            ),
-            timeout=STEP_TIMEOUT,
-        )
-    except TimeoutError:
-        _add_step(build_id, "Code generation timed out — falling back...")
-        result = {"content": "", "reasoning": ""}
+                thinking=False,
+                model=settings.GLM_FALLBACK_MODEL,
+            )
+            code = _strip_fences(code_text)
+        except Exception:
+            pass
 
-    code = _strip_fences(result["content"])
-    reasoning = result["reasoning"]
-
-    if reasoning:
-        _add_reasoning(build_id, "coding", reasoning)
-        _add_step(build_id, f"[thinking] GLM reasoned through implementation ({len(reasoning)} chars)")
-
-    if not code:
-        # Fallback 1: same model, no thinking, no web search
-        _add_step(build_id, "Retrying code generation (thinking disabled, no web search)...")
-        code_text = await chat(
-            messages=[
-                {"role": "system", "content": CODE_SYSTEM},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.7,
-            max_tokens=16384,
-            retries=2,
-            thinking=False,
-        )
-        code = _strip_fences(code_text)
+    # Publish final content
+    if code:
+        _pub(build_id, "file_chunk", {"file_path": "index.html", "content": code, "done": True})
+        _pub(build_id, "file_generated", {
+            "file_path": "index.html",
+            "file_count": 1,
+            "total_files": 1,
+            "chars": len(code),
+        })
 
     if not code:
-        # Fallback 2: fast model, no thinking — most reliable
-        _add_step(build_id, "Retrying with fast model (GLM-4.5)...")
-        code_text = await chat(
-            messages=[
-                {"role": "system", "content": CODE_SYSTEM},
-                {"role": "user", "content": (
-                    f"Build this app: {prompt}\n\n"
-                    f"Follow this architecture plan:\n{plan}\n\n"
-                    f"Generate the COMPLETE single-file HTML app using Tailwind CSS CDN. "
-                    f"Wrap your code in ```html fences."
-                )},
-            ],
-            temperature=0.7,
-            max_tokens=8192,
-            retries=2,
-            thinking=False,
-            model=settings.GLM_FAST_MODEL,
-        )
-        code = _strip_fences(code_text)
-
-    if not code:
-        _add_step(
-            build_id,
-            "Hint: empty code after fallbacks often means GLM rate limits (HTTP 429), quota, or key issues — "
-            "check server logs and .env; try GLM_MAX_CONCURRENT_REQUESTS=1 or wait before retry.",
-        )
+        _add_step(build_id, "All models failed to generate code — check rate limits and API key")
         raise ValueError("GLM returned empty code after all retries — cannot proceed")
 
     _update_build(build_id, generated_code=code)
