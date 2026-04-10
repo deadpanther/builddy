@@ -669,8 +669,8 @@ export default function BuildDetailPage() {
             </div>
           )}
 
-          {/* Preview / Code / Files tabs */}
-          {(deployUrl || build.generated_code || projectFiles) && (
+          {/* Preview / Code / Files tabs — show during active builds too (for live streaming) */}
+          {(deployUrl || build.generated_code || projectFiles || isActive) && (
             <div>
               <div className="mb-3 flex gap-1 rounded-lg border border-neutral-800 bg-neutral-900/40 p-1 w-fit">
                 <button
@@ -684,7 +684,7 @@ export default function BuildDetailPage() {
                 >
                   Live Preview
                 </button>
-                {projectFiles && (
+                {(projectFiles || isActive) && (
                   <button
                     onClick={() => setTab("files")}
                     className={`flex items-center gap-1.5 rounded px-3 py-1.5 font-mono text-xs transition-colors ${
@@ -694,7 +694,7 @@ export default function BuildDetailPage() {
                     }`}
                   >
                     <FolderOpen className="h-3 w-3" />
-                    Files ({Object.keys(projectFiles).length})
+                    Files {projectFiles ? `(${Object.keys(projectFiles).length})` : ""}
                     {isActive && (
                       <span className="ml-1 h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                     )}
@@ -717,11 +717,11 @@ export default function BuildDetailPage() {
               {tab === "preview" && deployUrl && (
                 <AppPreview key={previewKey} url={deployUrl} hasBackend={isMultiFile} />
               )}
-              {tab === "files" && projectFiles && (
+              {tab === "files" && (projectFiles || isActive) && (
                 <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)] min-w-0 max-w-full overflow-hidden">
                   <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
                     <FileExplorer
-                      files={projectFiles}
+                      files={projectFiles || {}}
                       selectedFile={selectedFile}
                       onSelectFile={setSelectedFile}
                     />
@@ -735,7 +735,7 @@ export default function BuildDetailPage() {
                         fileName={`${selectedFile} (generating...)`}
                         readOnly
                       />
-                    ) : selectedFile && projectFiles[selectedFile] != null ? (
+                    ) : selectedFile && projectFiles && projectFiles[selectedFile] != null ? (
                       <CodeEditor
                         code={projectFiles[selectedFile]}
                         language={selectedFile.split(".").pop() ?? "text"}
