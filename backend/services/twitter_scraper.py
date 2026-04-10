@@ -30,7 +30,7 @@ NITTER_HOSTS = [
     "nitter.privacydev.net",
 ]
 
-POLL_INTERVAL = 120  # seconds between checks
+POLL_INTERVAL = 10  # seconds between checks
 
 # Backend API base
 BACKEND_BASE = f"http://127.0.0.1:{settings.PORT}"
@@ -39,16 +39,40 @@ BACKEND_BASE = f"http://127.0.0.1:{settings.PORT}"
 IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 
 
+SEEN_IDS_FILE = Path(__file__).parent.parent / ".seen_tweet_ids"
+
+
 class TwitterMentionScraper:
     """Scrapes @builddy mentions from Nitter — no Twitter login needed."""
 
     def __init__(self):
         self._running = False
         self._thread: threading.Thread | None = None
-        self._seen_tweet_ids: set[str] = set()
+        self._seen_tweet_ids: set[str] = self._load_seen_ids()
         self._context = None
         self._page = None
         self._working_host: str | None = None
+
+    @staticmethod
+    def _load_seen_ids() -> set[str]:
+        """Load previously seen tweet IDs from disk."""
+        try:
+            if SEEN_IDS_FILE.exists():
+                ids = SEEN_IDS_FILE.read_text().strip().splitlines()
+                logger.info("Loaded %d seen tweet IDs from disk", len(ids))
+                return set(ids)
+        except Exception:
+            pass
+        return set()
+
+    def _save_seen_ids(self):
+        """Persist seen tweet IDs to disk (keep last 500)."""
+        try:
+            # Keep only the most recent 500 to avoid unbounded growth
+            recent = sorted(self._seen_tweet_ids)[-500:]
+            SEEN_IDS_FILE.write_text("\n".join(recent) + "\n")
+        except Exception as e:
+            logger.debug("Failed to save seen IDs: %s", e)
 
     async def _ensure_browser(self, pw):
         """Launch a lightweight Chromium browser."""
@@ -134,9 +158,11 @@ class TwitterMentionScraper:
         return mentions
 
     async def _parse_nitter_item(self, item) -> dict | None:
-        """Parse a Nitter timeline item into a mention dict."""
+        """Parse a Nitter timeline item into a mention dict.
+
+        Also captures screenshots of any images/videos in the tweet itself.
+        """
         # Get tweet link to extract tweet ID
-        # Nitter links look like: /username/status/1234567890
         link = await item.query_selector('a[href*="/status/"]')
         if not link:
             return None
@@ -149,7 +175,6 @@ class TwitterMentionScraper:
         # Get tweet text
         content_el = await item.query_selector(".tweet-content, .media-body")
         if not content_el:
-            # Fallback: get all text from the item
             content_el = item
         tweet_text = await content_el.inner_text()
         tweet_text = tweet_text.strip()
@@ -164,23 +189,32 @@ class TwitterMentionScraper:
             raw = await username_el.inner_text()
             twitter_username = raw.lstrip("@").strip()
 
-        # Get full name (for context)
-        fullname_el = await item.query_selector(".fullname")
-        fullname = ""
-        if fullname_el:
-            fullname = await fullname_el.inner_text()
-
-        # Check if it's a reply (Nitter shows "Replying to @someone")
+        # Check if it's a reply
         reply_el = await item.query_selector(".replying-to, .reply-to")
         parent_text = None
         if reply_el:
             parent_text = await reply_el.inner_text()
 
+        # Capture screenshot of any media (images/videos) in this tweet
+        tweet_screenshot = None
+        media = await item.query_selector(
+            ".still-image, .gallery-row, .video-container, .card-container, .attachments"
+        )
+        if media:
+            try:
+                import base64
+                screenshot_bytes = await media.screenshot()
+                if screenshot_bytes:
+                    tweet_screenshot = base64.b64encode(screenshot_bytes).decode("utf-8")
+                    logger.info("Captured media screenshot from tweet %s (%d bytes)", tweet_id, len(screenshot_bytes))
+            except Exception as e:
+                logger.debug("Failed to screenshot media in tweet %s: %s", tweet_id, e)
+
         return {
             "tweet_id": tweet_id,
             "tweet_text": tweet_text,
             "twitter_username": twitter_username,
-            "parent_screenshot": None,
+            "parent_screenshot": tweet_screenshot,  # media from THIS tweet (overridden by parent in _enrich_reply)
             "parent_text": parent_text,
         }
 
@@ -287,6 +321,7 @@ class TwitterMentionScraper:
 
                     if mentions:
                         logger.info("Processed %d new mentions via Nitter", len(mentions))
+                        self._save_seen_ids()
 
                 except Exception as e:
                     logger.error("Scraper poll error: %s", e)
