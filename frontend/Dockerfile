@@ -20,9 +20,11 @@ COPY . .
 # Next.js collects anonymous telemetry — disable it
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Build argument for the API URL (baked in at build time for Next.js public env)
+# Build arguments baked in at build time for Next.js public env vars
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG NEXT_PUBLIC_AUTOPSY_URL=http://localhost:8001
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_AUTOPSY_URL=$NEXT_PUBLIC_AUTOPSY_URL
 
 RUN npm run build
 
