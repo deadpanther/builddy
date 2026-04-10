@@ -1,4 +1,4 @@
-# ── Stage 1: Install dependencies ──────────────────────────────────
+# ── Stage 1: Install ALL dependencies (needed for build) ──────────
 FROM node:20-bookworm-slim AS deps
 
 WORKDIR /app
@@ -6,8 +6,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install production dependencies only
-RUN npm ci --omit=dev
+# Install all deps (dev deps needed for build step)
+RUN npm ci --legacy-peer-deps
 
 # ── Stage 2: Build the application ─────────────────────────────────
 FROM node:20-bookworm-slim AS builder
@@ -53,4 +53,5 @@ EXPOSE 3000
 ENV PORT=3000 \
     HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+# Railway sets $PORT dynamically
+CMD ["sh", "-c", "PORT=${PORT:-3000} node server.js"]
