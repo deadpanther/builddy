@@ -62,7 +62,11 @@ class TwitterMentionScraper:
             "user_data_dir": str(BROWSER_STATE_DIR),
             "headless": IS_HEADLESS,
             "viewport": {"width": 1280, "height": 900},
-            "args": ["--disable-blink-features=AutomationControlled"],
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "args": [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+            ],
         }
         # Use Brave on macOS, Playwright's Chromium elsewhere
         if not IS_RAILWAY and Path(BRAVE_PATH).exists():
@@ -121,8 +125,8 @@ class TwitterMentionScraper:
         # ── Auto-login flow ──
         logger.info("Attempting auto-login to X as %s...", username)
         try:
-            await self._page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
-            await self._page.wait_for_timeout(3000)
+            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+            await self._page.wait_for_timeout(5000)  # extra wait for JS to render login form
 
             # Debug: log what we see
             page_url = self._page.url
