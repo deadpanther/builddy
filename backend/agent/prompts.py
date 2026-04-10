@@ -606,10 +606,16 @@ TECH STACK (always use these — do not deviate):
 - Frontend must have dark mode support via Tailwind's dark: prefix and a class toggle
 
 FILE COUNT GUIDELINES:
-- **standard** tier: 5-10 files. Build a real product.
-  Typical: db.js, server.js, index.html, app.js (client-side logic), and additional pages for different views.
-- **fullstack** tier: 8-15 files. Comprehensive and production-like.
+- **standard** tier: 6-12 files. Build a real product.
+  Typical: db.js, server.js, index.html, app.js (client-side logic), and separate pages for each major feature.
+- **fullstack** tier: 10-18 files. Comprehensive and production-like.
   Typical: db.js, auth.js, server.js, index.html, login.html, dashboard.html, app.js, auth-client.js, and feature-specific pages.
+
+FILE SIZE RULE (CRITICAL):
+- Each file MUST be under 250 lines. If a feature would make a file larger, split it.
+- EACH frontend feature/view MUST be a separate HTML file (e.g. exercises.html, favorites.html, history.html) — do NOT cram multiple views into one file.
+- Complex JS logic MUST go in a separate .js file loaded via <script src="feature.js"></script>, not inline in HTML.
+- This prevents generation timeouts and keeps code maintainable.
 
 MANDATORY FILES (for both tiers):
 - backend/db.js — Database schema creation, connection export, query helper functions. Schema should include: created_at/updated_at timestamps, proper indexes, sensible defaults.
