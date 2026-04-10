@@ -1,4 +1,4 @@
-"""Database setup — SQLite + SQLModel."""
+"""Database setup — SQLite or PostgreSQL via SQLModel."""
 
 import logging
 
@@ -8,10 +8,13 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+_connect_args = {"check_same_thread": False} if _is_sqlite else {}
+
 engine = create_engine(
     settings.DATABASE_URL,
     echo=False,
-    connect_args={"check_same_thread": False},
+    connect_args=_connect_args,
 )
 
 
@@ -21,7 +24,11 @@ def create_db_and_tables():
 
 
 def _migrate_new_columns():
-    """Add columns that may be missing from older DB versions."""
+    """Add columns that may be missing from older DB versions.
+
+    Works with both SQLite and PostgreSQL. Silently skips columns that
+    already exist (SQLite raises generic error, PG raises 'column ... exists').
+    """
     new_columns = [
         ("builds", "build_type", "TEXT DEFAULT 'text'"),
         ("builds", "thumbnail_url", "TEXT"),
