@@ -45,5 +45,8 @@ RUN mkdir -p /app/deployed
 # Expose FastAPI port
 EXPOSE 8000
 
-# Run with uvicorn via uv
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Railway sets $PORT dynamically; default to 8000 for local
+ENV PORT=8000
+
+# Run uvicorn directly from the venv (uv is not in the runtime image)
+CMD ["sh", "-c", "python -m uvicorn main:app --host 0.0.0.0 --port $PORT"]
