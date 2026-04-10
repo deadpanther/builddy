@@ -199,13 +199,20 @@ class TwitterMentionScraper:
                     await verify_btn.click()
                 await self._page.wait_for_timeout(3000)
 
-            # Step 3: Enter password — wait with retries for the page to transition
+            # Step 3: Enter password — the page transitioned but the input may
+            # still be animating in. Try multiple strategies.
             password_input = None
-            password_selectors = ['input[name="password"]', 'input[type="password"]', 'input[autocomplete="current-password"]']
-            for attempt in range(3):  # retry up to 3 times (12s total)
+            password_selectors = [
+                'input[name="password"]',
+                'input[type="password"]',
+                'input[autocomplete="current-password"]',
+            ]
+
+            for attempt in range(4):  # retry up to 4 times
+                # Strategy 1: wait_for_selector with "attached" (not just "visible")
                 for sel in password_selectors:
                     try:
-                        password_input = await self._page.wait_for_selector(sel, timeout=4000, state="visible")
+                        password_input = await self._page.wait_for_selector(sel, timeout=3000, state="attached")
                         if password_input:
                             logger.info("Found password input with selector: %s (attempt %d)", sel, attempt + 1)
                             break
@@ -213,15 +220,39 @@ class TwitterMentionScraper:
                         continue
                 if password_input:
                     break
-                logger.info("Password field not found yet (attempt %d/3), waiting...", attempt + 1)
+
+                # Strategy 2: find any input that looks like a password field
+                all_inputs = await self._page.query_selector_all("input")
+                for inp in all_inputs:
+                    inp_type = await inp.get_attribute("type") or ""
+                    inp_name = await inp.get_attribute("name") or ""
+                    inp_auto = await inp.get_attribute("autocomplete") or ""
+                    if "password" in inp_type or "password" in inp_name or "password" in inp_auto:
+                        password_input = inp
+                        logger.info("Found password input via attribute scan: type=%s name=%s (attempt %d)", inp_type, inp_name, attempt + 1)
+                        break
+                if password_input:
+                    break
+
+                logger.info("Password field not found yet (attempt %d/4). Inputs on page: %d", attempt + 1, len(all_inputs))
                 await self._page.wait_for_timeout(2000)
 
             if not password_input:
-                # Log page content for debugging
                 page_text = await self._page.inner_text("body")
+                # Also dump all input attributes for debugging
+                all_inputs = await self._page.query_selector_all("input")
+                input_info = []
+                for inp in all_inputs:
+                    attrs = {
+                        "type": await inp.get_attribute("type"),
+                        "name": await inp.get_attribute("name"),
+                        "autocomplete": await inp.get_attribute("autocomplete"),
+                        "placeholder": await inp.get_attribute("placeholder"),
+                    }
+                    input_info.append(str(attrs))
                 logger.error(
-                    "Could not find password field. URL: %s | Page text (first 500 chars): %s",
-                    self._page.url, page_text[:500],
+                    "Could not find password field. URL: %s | Inputs: %s | Page text: %s",
+                    self._page.url, " | ".join(input_info), page_text[:300],
                 )
                 return False
 
