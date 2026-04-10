@@ -166,21 +166,10 @@ class TwitterMentionScraper:
             await username_input.type(username, delay=50)
             await self._page.wait_for_timeout(1000)
 
-            # Click "Next" button — use JS click as fallback since normal click
-            # sometimes doesn't register on Twitter's React buttons
-            next_btn = None
-            for sel in ['[role="button"]:has-text("Next")', 'button:has-text("Next")', '[data-testid="LoginForm_Next_Button"]']:
-                next_btn = await self._page.query_selector(sel)
-                if next_btn:
-                    logger.info("Found Next button with selector: %s", sel)
-                    break
-            if next_btn:
-                # Try JS click first (more reliable on SPAs), fall back to regular click
-                await next_btn.evaluate("el => el.click()")
-                logger.info("Clicked Next button via JS")
-            else:
-                logger.info("No Next button found, pressing Enter")
-                await self._page.keyboard.press("Enter")
+            # Submit username — press Enter (most reliable for Twitter's React SPA;
+            # button clicks via JS/Playwright don't trigger React's event system)
+            await self._page.keyboard.press("Enter")
+            logger.info("Pressed Enter to submit username")
             await self._page.wait_for_timeout(5000)
 
             logger.info("After Next — URL: %s", self._page.url)
