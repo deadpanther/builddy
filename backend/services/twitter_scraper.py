@@ -121,32 +121,62 @@ class TwitterMentionScraper:
         # ── Auto-login flow ──
         logger.info("Attempting auto-login to X as %s...", username)
         try:
-            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
-            await self._page.wait_for_timeout(2000)
+            await self._page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
+            await self._page.wait_for_timeout(3000)
 
-            # Step 1: Enter username/email
-            username_input = await self._page.wait_for_selector(
-                'input[autocomplete="username"], input[name="text"]',
-                timeout=10000,
-            )
+            # Debug: log what we see
+            page_url = self._page.url
+            page_title = await self._page.title()
+            logger.info("Login page loaded: url=%s title=%s", page_url, page_title[:60])
+
+            # Step 1: Find and fill username — try multiple selectors
+            username_input = None
+            username_selectors = [
+                'input[autocomplete="username"]',
+                'input[name="text"]',
+                'input[name="session[username_or_email]"]',
+                'input[type="text"]',
+            ]
+            for sel in username_selectors:
+                try:
+                    username_input = await self._page.wait_for_selector(sel, timeout=5000, state="visible")
+                    if username_input:
+                        logger.info("Found username input with selector: %s", sel)
+                        break
+                except Exception:
+                    continue
+
+            if not username_input:
+                # Last resort: find any visible input on the page
+                all_inputs = await self._page.query_selector_all("input:visible")
+                logger.warning("No username selector matched. Found %d visible inputs.", len(all_inputs))
+                if all_inputs:
+                    username_input = all_inputs[0]
+                else:
+                    logger.error("No input fields found on login page at all")
+                    return False
+
+            await username_input.click()
             await username_input.fill(username)
-            await self._page.wait_for_timeout(500)
+            await self._page.wait_for_timeout(800)
 
-            # Click "Next"
-            next_btn = await self._page.query_selector('[role="button"]:has-text("Next")')
+            # Click "Next" button
+            next_btn = None
+            for sel in ['[role="button"]:has-text("Next")', 'button:has-text("Next")', '[data-testid="LoginForm_Next_Button"]']:
+                next_btn = await self._page.query_selector(sel)
+                if next_btn:
+                    break
             if next_btn:
                 await next_btn.click()
             else:
                 await self._page.keyboard.press("Enter")
-            await self._page.wait_for_timeout(2000)
+            await self._page.wait_for_timeout(3000)
 
             # Step 2: Check for unusual activity / phone verification challenge
             challenge_input = await self._page.query_selector(
                 'input[data-testid="ocfEnterTextTextInput"]'
             )
             if challenge_input:
-                # Twitter is asking for phone/email verification
-                # Try entering the username/email as the verification answer
                 logger.warning("Twitter verification challenge detected — entering username as answer")
                 await challenge_input.fill(username)
                 verify_btn = await self._page.query_selector(
@@ -154,33 +184,44 @@ class TwitterMentionScraper:
                 )
                 if verify_btn:
                     await verify_btn.click()
-                await self._page.wait_for_timeout(2000)
+                await self._page.wait_for_timeout(3000)
 
-            # Step 3: Enter password
-            password_input = await self._page.wait_for_selector(
-                'input[name="password"], input[type="password"]',
-                timeout=10000,
-            )
+            # Step 3: Enter password — try multiple selectors
+            password_input = None
+            for sel in ['input[name="password"]', 'input[type="password"]', 'input[autocomplete="current-password"]']:
+                try:
+                    password_input = await self._page.wait_for_selector(sel, timeout=5000, state="visible")
+                    if password_input:
+                        break
+                except Exception:
+                    continue
+
+            if not password_input:
+                logger.error("Could not find password field. Current URL: %s", self._page.url)
+                return False
+
+            await password_input.click()
             await password_input.fill(password)
-            await self._page.wait_for_timeout(500)
+            await self._page.wait_for_timeout(800)
 
-            # Click "Log in"
-            login_btn = await self._page.query_selector(
-                '[data-testid="LoginForm_Login_Button"], [role="button"]:has-text("Log in")'
-            )
+            # Click "Log in" button
+            login_btn = None
+            for sel in ['[data-testid="LoginForm_Login_Button"]', '[role="button"]:has-text("Log in")', 'button:has-text("Log in")']:
+                login_btn = await self._page.query_selector(sel)
+                if login_btn:
+                    break
             if login_btn:
                 await login_btn.click()
             else:
                 await self._page.keyboard.press("Enter")
 
-            # Wait for redirect to home
-            await self._page.wait_for_timeout(5000)
+            # Wait for redirect
+            await self._page.wait_for_timeout(6000)
 
             if await self._check_logged_in():
                 logger.info("Auto-login to X successful!")
                 return True
 
-            # Might have hit 2FA or captcha
             logger.warning(
                 "Auto-login didn't reach home — Twitter may require 2FA or captcha. "
                 "Current URL: %s", self._page.url
