@@ -226,11 +226,23 @@ class TwitterMentionScraper:
                 raw = await username_el.inner_text()
                 twitter_username = raw.lstrip("@").strip()
 
-        # Check if it's a reply
+        # Check if it's a reply — capture the "Replying to @someone" text
         reply_el = await item.query_selector(".replying-to, .reply-to")
         parent_text = None
         if reply_el:
             parent_text = await reply_el.inner_text()
+
+        # For replies: also screenshot the entire search result card
+        # (gives visual context when thread page returns "Tweet not found")
+        if reply_el and not tweet_screenshot:
+            try:
+                import base64
+                card_bytes = await item.screenshot()
+                if card_bytes:
+                    tweet_screenshot = base64.b64encode(card_bytes).decode("utf-8")
+                    logger.info("Captured search card screenshot for reply tweet %s (%d bytes)", tweet_id, len(card_bytes))
+            except Exception:
+                pass
 
         # Capture screenshot of any media (images/videos) in this tweet
         tweet_screenshot = None
@@ -259,21 +271,47 @@ class TwitterMentionScraper:
         """Click into the tweet on Nitter to get full thread context.
 
         Extracts parent tweet text and screenshots any media in the parent.
-        The thread on Nitter shows items in order: parent(s) first, then the mention last.
+        Falls back to the "Replying to" text from the search page if Nitter
+        can't load the individual tweet (returns "Tweet not found").
         """
         if not self._working_host:
             return mention
-        try:
-            tweet_url = f"https://{self._working_host}/{mention['twitter_username']}/status/{mention['tweet_id']}"
-            await self._page.goto(tweet_url, wait_until="domcontentloaded", timeout=15000)
-            await self._page.wait_for_timeout(3000)
 
-            # Refresh if needed (Nitter quirk)
-            items = await self._page.query_selector_all(".timeline-item")
+        # Save the search-page parent_text as fallback (e.g. "Replying to @someone")
+        fallback_parent = mention.get("parent_text")
+
+        try:
+            # Try multiple Nitter hosts for thread pages (some hosts can't find certain tweets)
+            hosts_to_try = [self._working_host] + [h for h in NITTER_HOSTS if h != self._working_host]
+            items = []
+
+            for host in hosts_to_try[:3]:  # try up to 3 hosts
+                tweet_url = f"https://{host}/{mention['twitter_username']}/status/{mention['tweet_id']}"
+                try:
+                    await self._page.goto(tweet_url, wait_until="domcontentloaded", timeout=12000)
+                    await self._page.wait_for_timeout(3000)
+
+                    body_text = await self._page.inner_text("body")
+                    if "not found" in body_text.lower():
+                        logger.info("Nitter %s can't find tweet %s, trying next host", host, mention["tweet_id"])
+                        continue
+
+                    items = await self._page.query_selector_all(".timeline-item")
+                    if not items:
+                        await self._page.reload(wait_until="domcontentloaded", timeout=12000)
+                        await self._page.wait_for_timeout(3000)
+                        items = await self._page.query_selector_all(".timeline-item")
+
+                    if items:
+                        logger.info("Thread loaded from %s for tweet %s: %d items", host, mention["tweet_id"], len(items))
+                        break
+                except Exception:
+                    continue
+
             if not items:
-                await self._page.reload(wait_until="domcontentloaded", timeout=15000)
-                await self._page.wait_for_timeout(4000)
-                items = await self._page.query_selector_all(".timeline-item")
+                logger.warning("No Nitter host could load tweet %s — using search page context", mention["tweet_id"])
+                mention["parent_text"] = fallback_parent
+                return mention
 
             logger.info("Thread for tweet %s: %d items", mention["tweet_id"], len(items))
 
@@ -287,21 +325,20 @@ class TwitterMentionScraper:
                 if content_el:
                     text = (await content_el.inner_text()).strip()
                     if text:
-                        # Get the parent's username for attribution
                         user_el = await parent_item.query_selector(".username")
                         user = (await user_el.inner_text()).strip() if user_el else ""
                         parent_texts.append(f"{user}: {text}" if user else text)
 
-                # Screenshot media in the parent (images, videos, cards)
+                # Screenshot media in the parent
                 if not mention.get("parent_screenshot"):
                     media = await parent_item.query_selector(
-                        ".still-image, .gallery-row, .video-container, .card-container"
+                        ".still-image, .gallery-row, .video-container, .card-container, .attachments"
                     )
                     if media:
                         try:
+                            import base64
                             screenshot_bytes = await media.screenshot()
                             if screenshot_bytes:
-                                import base64
                                 mention["parent_screenshot"] = base64.b64encode(screenshot_bytes).decode("utf-8")
                                 logger.info("Captured parent media screenshot (%d bytes)", len(screenshot_bytes))
                         except Exception:
@@ -309,13 +346,16 @@ class TwitterMentionScraper:
 
             if parent_texts:
                 mention["parent_text"] = "\n\n".join(parent_texts)
-                logger.info(
-                    "Enriched mention %s with %d parent tweet(s)",
-                    mention["tweet_id"], len(parent_texts),
-                )
+                logger.info("Enriched mention %s with %d parent tweet(s)", mention["tweet_id"], len(parent_texts))
+            elif fallback_parent:
+                # Thread loaded but no parent content extracted — use search page fallback
+                mention["parent_text"] = fallback_parent
 
         except Exception as e:
-            logger.warning("Failed to enrich reply %s: %s", mention["tweet_id"], e)
+            logger.warning("Failed to enrich reply %s: %s — keeping search page context", mention["tweet_id"], e)
+            # Preserve the fallback from search page
+            if fallback_parent and not mention.get("parent_text"):
+                mention["parent_text"] = fallback_parent
 
         return mention
 
