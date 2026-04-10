@@ -241,7 +241,7 @@ async def generate_file(
                 ],
                 on_chunk=_on_chunk,
                 temperature=0.5,
-                max_tokens=8192,
+                max_tokens=16384,
                 model=settings.GLM_CODE_MODEL,
             ),
             timeout=FILE_TIMEOUT,
@@ -268,7 +268,7 @@ async def generate_file(
                         {"role": "user", "content": user_content},
                     ],
                     temperature=0.5,
-                    max_tokens=8192,
+                    max_tokens=16384,
                     thinking=False,
                     retries=2,
                     model=settings.GLM_FALLBACK_MODEL,
@@ -410,7 +410,7 @@ async def integration_review(build_id: str, manifest: dict, all_files: dict[str,
                     {"role": "user", "content": user_content},
                 ],
                 temperature=0.2,
-                max_tokens=8192,
+                max_tokens=16384,
                 model=settings.GLM_FAST_MODEL,
                 fallback_model=settings.GLM_FALLBACK_MODEL,
             ),
@@ -565,7 +565,7 @@ async def analyze_impact(build_id: str, modification: str, manifest: dict, exist
                 {"role": "user", "content": user_content},
             ],
             temperature=0.3,
-            max_tokens=8192,
+            max_tokens=16384,
         )
         impact_text = result["content"].strip()
         reasoning = result["reasoning"]
@@ -581,7 +581,7 @@ async def analyze_impact(build_id: str, modification: str, manifest: dict, exist
                 {"role": "user", "content": user_content},
             ],
             temperature=0.3,
-            max_tokens=8192,
+            max_tokens=16384,
             thinking=False,
         )
 

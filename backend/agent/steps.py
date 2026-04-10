@@ -230,7 +230,7 @@ async def generate_code(build_id: str, prompt: str, plan: str) -> str:
                     {"role": "user", "content": user_content},
                 ],
                 temperature=0.7,
-                max_tokens=8192,
+                max_tokens=16384,
                 retries=2,
                 thinking=False,
                 model=settings.GLM_FALLBACK_MODEL,

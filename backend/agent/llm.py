@@ -123,7 +123,7 @@ async def _request_with_fallback(
 async def chat(
     messages: list[dict],
     temperature: float = 0.7,
-    max_tokens: int = 8192,
+    max_tokens: int = 16384,
     retries: int = 2,
     model: str | None = None,
     tools: list[dict] | None = None,
@@ -176,7 +176,7 @@ async def chat(
 async def chat_with_reasoning(
     messages: list[dict],
     temperature: float = 0.7,
-    max_tokens: int = 8192,
+    max_tokens: int = 16384,
     retries: int = 2,
     model: str | None = None,
     tools: list[dict] | None = None,
@@ -274,7 +274,7 @@ async def chat_streaming(
     messages: list[dict],
     on_chunk: callable,
     temperature: float = 0.7,
-    max_tokens: int = 8192,
+    max_tokens: int = 16384,
     model: str | None = None,
 ) -> str:
     """Stream a chat response, calling on_chunk(accumulated_text) for each token.
