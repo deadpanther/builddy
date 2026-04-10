@@ -1,12 +1,11 @@
 """
-Playwright-based Twitter mention scraper.
+Nitter-based Twitter mention scraper.
 
-Runs as a background thread, opens a persistent Chromium browser logged into
-@builddy's X account, and polls the notifications/mentions tab for new tweets.
-New mentions are forwarded to the backend API to trigger builds.
+Scrapes @builddy mentions from Nitter (public Twitter frontend) — no login,
+no API keys, no bot detection. Runs Playwright headless to render Nitter's
+JavaScript, parses tweet cards, and forwards mentions to the backend API.
 
-No paid Twitter API tier needed — Free tier still allows posting replies via
-OAuth 1.0a, which the existing twitter.py service handles.
+Works locally and on Railway without any Twitter credentials.
 """
 
 import asyncio
@@ -17,395 +16,233 @@ import threading
 from pathlib import Path
 
 import httpx
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+from playwright.async_api import async_playwright
 
 from config import settings
 
 logger = logging.getLogger(__name__)
 
-# Persistent browser state so we stay logged in across restarts
-BROWSER_STATE_DIR = Path(__file__).parent.parent / ".twitter_browser_state"
-BRAVE_PATH = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+# Nitter instances to try (in order of preference)
+NITTER_HOSTS = [
+    "nitter.net",
+    "xcancel.com",
+    "nitter.poast.org",
+    "nitter.privacydev.net",
+]
 
-# Detect environment: use Brave locally (macOS), Playwright Chromium on Railway/Linux
-import platform
-IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT")) or not Path(BRAVE_PATH).exists()
-IS_HEADLESS = IS_RAILWAY or platform.system() != "Darwin"
+POLL_INTERVAL = 120  # seconds between checks
 
 # Backend API base
 BACKEND_BASE = f"http://127.0.0.1:{settings.PORT}"
 
-POLL_INTERVAL = 120  # seconds between checks (was 45 — reduced to avoid log noise)
-MENTIONS_URL = "https://x.com/notifications/mentions"
-LOGIN_URL = "https://x.com/i/flow/login"
+# Detect environment
+IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 
 
 class TwitterMentionScraper:
-    """Scrapes @builddy mentions from X using a real browser session."""
+    """Scrapes @builddy mentions from Nitter — no Twitter login needed."""
 
     def __init__(self):
         self._running = False
         self._thread: threading.Thread | None = None
         self._seen_tweet_ids: set[str] = set()
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
-        self._page: Page | None = None
+        self._context = None
+        self._page = None
+        self._working_host: str | None = None
 
     async def _ensure_browser(self, pw):
-        """Launch browser with persistent context (keeps login cookies).
+        """Launch a lightweight Chromium browser."""
+        self._context = await pw.chromium.launch_persistent_context(
+            user_data_dir=str(Path(__file__).parent.parent / ".nitter_browser_state"),
+            headless=IS_RAILWAY,
+            viewport={"width": 1280, "height": 900},
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+        )
+        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
 
-        Uses Brave on macOS (local dev), Playwright Chromium on Railway/Linux.
-        """
-        BROWSER_STATE_DIR.mkdir(parents=True, exist_ok=True)
-
-        launch_kwargs = {
-            "user_data_dir": str(BROWSER_STATE_DIR),
-            "headless": IS_HEADLESS,
-            "viewport": {"width": 1280, "height": 900},
-            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "args": [
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-            ],
-        }
-        # Use Brave on macOS, Playwright's Chromium elsewhere
-        if not IS_RAILWAY and Path(BRAVE_PATH).exists():
-            launch_kwargs["executable_path"] = BRAVE_PATH
-
-        self._context = await pw.chromium.launch_persistent_context(**launch_kwargs)
-        # Use existing page or create one
-        if self._context.pages:
-            self._page = self._context.pages[0]
-        else:
-            self._page = await self._context.new_page()
-
-    async def _check_logged_in(self) -> bool:
-        """Check if we're logged into X using a SEPARATE tab so we don't
-        interrupt the user if they're manually logging in on the main page."""
-        check_page = None
-        try:
-            check_page = await self._context.new_page()
-            await check_page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=15000)
-            await check_page.wait_for_timeout(3000)
-            url = check_page.url
-            if "login" in url or "flow" in url:
-                return False
-            home_indicator = await check_page.query_selector('[data-testid="SideNav_NewTweet_Button"]')
-            return home_indicator is not None
-        except Exception as e:
-            logger.error("Login check failed: %s", e)
-            return False
-        finally:
-            if check_page:
-                await check_page.close()
-
-    async def _auto_login(self) -> bool:
-        """Log into X automatically using credentials from env vars.
-
-        Falls back to waiting for manual login if credentials aren't set
-        or if Twitter presents a challenge (captcha, 2FA, etc).
-        """
-        # Local dev (visible browser): always use manual login.
-        # Twitter's bot detection blocks automated login from Playwright,
-        # so we open the login page and let the user sign in manually.
-        # The persistent browser context saves cookies for future runs.
-        if not IS_HEADLESS:
-            logger.warning(
-                "Opening X login page — please log in manually in the browser window. "
-                "Your session will be saved for future runs."
-            )
-            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
-            for _ in range(60):  # wait up to 5 minutes
-                await self._page.wait_for_timeout(5000)
-                if await self._check_logged_in():
-                    logger.info("Successfully logged into X!")
-                    return True
-            logger.error("Timed out waiting for manual X login")
-            return False
-
-        # Railway / headless: try automated login
-        username = settings.TWITTER_USERNAME
-        password = settings.TWITTER_PASSWORD
-
-        if not username or not password:
-            logger.error(
-                "TWITTER_USERNAME and TWITTER_PASSWORD required for headless login. "
-                "Set them in .env or Railway env vars."
-            )
-            return False
-
-        # ── Auto-login flow ──
-        logger.info("Attempting auto-login to X as %s...", username)
-        try:
-            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
-            await self._page.wait_for_timeout(5000)  # extra wait for JS to render login form
-
-            # Debug: log what we see
-            page_url = self._page.url
-            page_title = await self._page.title()
-            logger.info("Login page loaded: url=%s title=%s", page_url, page_title[:60])
-
-            # Step 1: Find and fill username — try multiple selectors
-            username_input = None
-            username_selectors = [
-                'input[autocomplete="username"]',
-                'input[name="text"]',
-                'input[name="session[username_or_email]"]',
-                'input[type="text"]',
-            ]
-            for sel in username_selectors:
-                try:
-                    username_input = await self._page.wait_for_selector(sel, timeout=5000, state="visible")
-                    if username_input:
-                        logger.info("Found username input with selector: %s", sel)
-                        break
-                except Exception:
-                    continue
-
-            if not username_input:
-                # Last resort: find any visible input on the page
-                all_inputs = await self._page.query_selector_all("input:visible")
-                logger.warning("No username selector matched. Found %d visible inputs.", len(all_inputs))
-                if all_inputs:
-                    username_input = all_inputs[0]
-                else:
-                    logger.error("No input fields found on login page at all")
-                    return False
-
-            await username_input.click()
-            # Use type() instead of fill() — simulates real keystrokes so Twitter
-            # enables the Next button (fill() doesn't trigger input events properly)
-            await username_input.type(username, delay=50)
-            await self._page.wait_for_timeout(1000)
-
-            # Submit username — press Enter (most reliable for Twitter's React SPA;
-            # button clicks via JS/Playwright don't trigger React's event system)
-            await self._page.keyboard.press("Enter")
-            logger.info("Pressed Enter to submit username")
-            await self._page.wait_for_timeout(5000)
-
-            logger.info("After Next — URL: %s", self._page.url)
-
-            # Step 2: Check for unusual activity / phone verification challenge
-            challenge_input = await self._page.query_selector(
-                'input[data-testid="ocfEnterTextTextInput"]'
-            )
-            if challenge_input:
-                logger.warning("Twitter verification challenge detected — entering username as answer")
-                await challenge_input.fill(username)
-                verify_btn = await self._page.query_selector(
-                    '[data-testid="ocfEnterTextNextButton"], [role="button"]:has-text("Next")'
-                )
-                if verify_btn:
-                    await verify_btn.click()
+    async def _find_working_host(self) -> str | None:
+        """Try Nitter instances until one works."""
+        for host in NITTER_HOSTS:
+            url = f"https://{host}/search?f=tweets&q=%40builddy"
+            try:
+                resp = await self._page.goto(url, wait_until="domcontentloaded", timeout=15000)
                 await self._page.wait_for_timeout(3000)
-
-            # Step 3: Enter password — the page transitioned but the input may
-            # still be animating in. Try multiple strategies.
-            password_input = None
-            password_selectors = [
-                'input[name="password"]',
-                'input[type="password"]',
-                'input[autocomplete="current-password"]',
-            ]
-
-            for attempt in range(4):  # retry up to 4 times
-                # Strategy 1: wait_for_selector with "attached" (not just "visible")
-                for sel in password_selectors:
-                    try:
-                        password_input = await self._page.wait_for_selector(sel, timeout=3000, state="attached")
-                        if password_input:
-                            logger.info("Found password input with selector: %s (attempt %d)", sel, attempt + 1)
-                            break
-                    except Exception:
-                        continue
-                if password_input:
-                    break
-
-                # Strategy 2: find any input that looks like a password field
-                all_inputs = await self._page.query_selector_all("input")
-                for inp in all_inputs:
-                    inp_type = await inp.get_attribute("type") or ""
-                    inp_name = await inp.get_attribute("name") or ""
-                    inp_auto = await inp.get_attribute("autocomplete") or ""
-                    if "password" in inp_type or "password" in inp_name or "password" in inp_auto:
-                        password_input = inp
-                        logger.info("Found password input via attribute scan: type=%s name=%s (attempt %d)", inp_type, inp_name, attempt + 1)
-                        break
-                if password_input:
-                    break
-
-                logger.info("Password field not found yet (attempt %d/4). Inputs on page: %d", attempt + 1, len(all_inputs))
-                await self._page.wait_for_timeout(2000)
-
-            if not password_input:
-                page_text = await self._page.inner_text("body")
-                # Also dump all input attributes for debugging
-                all_inputs = await self._page.query_selector_all("input")
-                input_info = []
-                for inp in all_inputs:
-                    attrs = {
-                        "type": await inp.get_attribute("type"),
-                        "name": await inp.get_attribute("name"),
-                        "autocomplete": await inp.get_attribute("autocomplete"),
-                        "placeholder": await inp.get_attribute("placeholder"),
-                    }
-                    input_info.append(str(attrs))
-                logger.error(
-                    "Could not find password field. URL: %s | Inputs: %s | Page text: %s",
-                    self._page.url, " | ".join(input_info), page_text[:300],
-                )
-                return False
-
-            await password_input.click()
-            await password_input.type(password, delay=30)
-            await self._page.wait_for_timeout(1000)
-
-            # Click "Log in" button
-            login_btn = None
-            for sel in ['[data-testid="LoginForm_Login_Button"]', '[role="button"]:has-text("Log in")', 'button:has-text("Log in")']:
-                login_btn = await self._page.query_selector(sel)
-                if login_btn:
-                    break
-            if login_btn:
-                await login_btn.evaluate("el => el.click()")
-                logger.info("Clicked Log in button via JS")
-            else:
-                await self._page.keyboard.press("Enter")
-
-            # Wait for redirect
-            await self._page.wait_for_timeout(6000)
-
-            if await self._check_logged_in():
-                logger.info("Auto-login to X successful!")
-                return True
-
-            logger.warning(
-                "Auto-login didn't reach home — Twitter may require 2FA or captcha. "
-                "Current URL: %s", self._page.url
-            )
-            return False
-
-        except Exception as e:
-            logger.error("Auto-login failed: %s", e)
-            return False
+                if resp and resp.status == 200 and "login" not in self._page.url:
+                    # Nitter sometimes needs a refresh on first load
+                    items = await self._page.query_selector_all(".timeline-item")
+                    if not items:
+                        await self._page.reload(wait_until="domcontentloaded", timeout=15000)
+                        await self._page.wait_for_timeout(3000)
+                    items = await self._page.query_selector_all(".timeline-item")
+                    if items:
+                        logger.info("Nitter instance %s works (%d tweets found)", host, len(items))
+                        return host
+                    # Maybe different structure
+                    body = await self._page.inner_text("body")
+                    if len(body) > 200 and "No items found" not in body:
+                        logger.info("Nitter instance %s has content", host)
+                        return host
+                logger.debug("Nitter instance %s: no results", host)
+            except Exception as e:
+                logger.debug("Nitter instance %s failed: %s", host, e)
+        return None
 
     async def _scrape_mentions(self) -> list[dict]:
-        """Navigate to mentions tab and extract new tweets."""
+        """Scrape @builddy mentions from Nitter search."""
+        if not self._working_host:
+            self._working_host = await self._find_working_host()
+            if not self._working_host:
+                logger.warning("No working Nitter instance found")
+                return []
+
+        url = f"https://{self._working_host}/search?f=tweets&q=%40builddy"
         mentions = []
+
         try:
-            await self._page.goto(MENTIONS_URL, wait_until="domcontentloaded", timeout=20000)
-            await self._page.wait_for_timeout(4000)
+            await self._page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            await self._page.wait_for_timeout(3000)
 
-            # Find tweet articles on the mentions page
-            articles = await self._page.query_selector_all('article[data-testid="tweet"]')
-            logger.debug("Found %d tweet articles on mentions page", len(articles))
+            # Nitter sometimes needs a refresh to load results
+            items = await self._page.query_selector_all(".timeline-item")
+            if not items:
+                logger.debug("No items on first load — refreshing Nitter page")
+                await self._page.reload(wait_until="domcontentloaded", timeout=20000)
+                await self._page.wait_for_timeout(4000)
 
-            for article in articles[:15]:  # only check latest 15
+            # Nitter uses .timeline-item for each tweet
+            items = await self._page.query_selector_all(".timeline-item")
+            if not items:
+                # Fallback: try other selectors
+                items = await self._page.query_selector_all(".tweet-body, article")
+
+            logger.debug("Found %d items on Nitter", len(items))
+
+            for item in items[:15]:
                 try:
-                    mention = await self._parse_tweet_article(article)
+                    mention = await self._parse_nitter_item(item)
                     if mention and mention["tweet_id"] not in self._seen_tweet_ids:
                         mentions.append(mention)
                 except Exception as e:
-                    logger.debug("Failed to parse tweet article: %s", e)
-                    continue
+                    logger.debug("Failed to parse Nitter item: %s", e)
 
         except Exception as e:
-            logger.error("Failed to scrape mentions: %s", e)
+            logger.error("Failed to scrape Nitter: %s", e)
+            # Reset host so we try again next poll
+            self._working_host = None
 
         return mentions
 
-    async def _parse_tweet_article(self, article) -> dict | None:
-        """Extract tweet data from an article element."""
-        # Get the tweet link to extract tweet ID
-        # Tweet links look like: /username/status/1234567890
-        links = await article.query_selector_all('a[href*="/status/"]')
-        tweet_id = None
-        for link in links:
-            href = await link.get_attribute("href")
-            if href and "/status/" in href:
-                match = re.search(r"/status/(\d+)", href)
-                if match:
-                    tweet_id = match.group(1)
-                    break
-
-        if not tweet_id:
+    async def _parse_nitter_item(self, item) -> dict | None:
+        """Parse a Nitter timeline item into a mention dict."""
+        # Get tweet link to extract tweet ID
+        # Nitter links look like: /username/status/1234567890
+        link = await item.query_selector('a[href*="/status/"]')
+        if not link:
             return None
+        href = await link.get_attribute("href") or ""
+        match = re.search(r"/status/(\d+)", href)
+        if not match:
+            return None
+        tweet_id = match.group(1)
 
         # Get tweet text
-        tweet_text_el = await article.query_selector('[data-testid="tweetText"]')
-        tweet_text = ""
-        if tweet_text_el:
-            tweet_text = await tweet_text_el.inner_text()
-
-        # Get username from the article
-        username_els = await article.query_selector_all('a[role="link"] span')
-        twitter_username = "unknown"
-        for el in username_els:
-            text = await el.inner_text()
-            if text.startswith("@"):
-                twitter_username = text.lstrip("@")
-                break
+        content_el = await item.query_selector(".tweet-content, .media-body")
+        if not content_el:
+            # Fallback: get all text from the item
+            content_el = item
+        tweet_text = await content_el.inner_text()
+        tweet_text = tweet_text.strip()
 
         if not tweet_text:
             return None
+
+        # Get username
+        username_el = await item.query_selector(".username, a[href^='/']")
+        twitter_username = "unknown"
+        if username_el:
+            raw = await username_el.inner_text()
+            twitter_username = raw.lstrip("@").strip()
+
+        # Get full name (for context)
+        fullname_el = await item.query_selector(".fullname")
+        fullname = ""
+        if fullname_el:
+            fullname = await fullname_el.inner_text()
+
+        # Check if it's a reply (Nitter shows "Replying to @someone")
+        reply_el = await item.query_selector(".replying-to, .reply-to")
+        parent_text = None
+        if reply_el:
+            parent_text = await reply_el.inner_text()
 
         return {
             "tweet_id": tweet_id,
             "tweet_text": tweet_text,
             "twitter_username": twitter_username,
-            "parent_screenshot": None,  # filled by _enrich_reply
-            "parent_text": None,
+            "parent_screenshot": None,
+            "parent_text": parent_text,
         }
 
     async def _enrich_reply(self, mention: dict) -> dict:
-        """If the mention is a reply to another tweet, screenshot the parent tweet's content."""
+        """Click into the tweet on Nitter to get full thread context.
+
+        Extracts parent tweet text and screenshots any media in the parent.
+        The thread on Nitter shows items in order: parent(s) first, then the mention last.
+        """
+        if not self._working_host:
+            return mention
         try:
-            # Navigate to the mention tweet to see the parent
-            tweet_url = f"https://x.com/i/status/{mention['tweet_id']}"
+            tweet_url = f"https://{self._working_host}/{mention['twitter_username']}/status/{mention['tweet_id']}"
             await self._page.goto(tweet_url, wait_until="domcontentloaded", timeout=15000)
             await self._page.wait_for_timeout(3000)
 
-            # Find all tweet articles — the parent tweet is typically the FIRST one
-            articles = await self._page.query_selector_all('article[data-testid="tweet"]')
-            if len(articles) < 2:
-                return mention  # not a reply or can't find parent
+            # Refresh if needed
+            items = await self._page.query_selector_all(".timeline-item, .main-tweet, .reply")
+            if not items:
+                await self._page.reload(wait_until="domcontentloaded", timeout=15000)
+                await self._page.wait_for_timeout(3000)
+                items = await self._page.query_selector_all(".timeline-item, .main-tweet, .reply")
 
-            parent_article = articles[0]
+            if len(items) < 2:
+                return mention  # No parent — single tweet, not a reply
 
-            # Get parent tweet text
-            parent_text_el = await parent_article.query_selector('[data-testid="tweetText"]')
-            if parent_text_el:
-                mention["parent_text"] = await parent_text_el.inner_text()
+            # Everything except the last item is a parent tweet
+            parent_texts = []
+            for parent_item in items[:-1]:
+                content_el = await parent_item.query_selector(".tweet-content")
+                if content_el:
+                    text = (await content_el.inner_text()).strip()
+                    if text:
+                        # Get the parent's username for attribution
+                        user_el = await parent_item.query_selector(".username")
+                        user = (await user_el.inner_text()).strip() if user_el else ""
+                        parent_texts.append(f"{user}: {text}" if user else text)
 
-            # Also grab any link card title/description (e.g. "Turn any TV into a retro split-flap display")
-            card_title = await parent_article.query_selector('[data-testid="card.layoutLarge.detail"] span, [data-testid="card.layoutSmall.detail"] span')
-            if card_title:
-                card_text = await card_title.inner_text()
-                if card_text and mention["parent_text"]:
-                    mention["parent_text"] += f"\n\nLinked page: {card_text}"
-                elif card_text:
-                    mention["parent_text"] = card_text
+                # Screenshot media in the parent (images, videos, cards)
+                if not mention.get("parent_screenshot"):
+                    media = await parent_item.query_selector(
+                        ".still-image, .gallery-row, .video-container, .card-container"
+                    )
+                    if media:
+                        try:
+                            screenshot_bytes = await media.screenshot()
+                            if screenshot_bytes:
+                                import base64
+                                mention["parent_screenshot"] = base64.b64encode(screenshot_bytes).decode("utf-8")
+                                logger.info("Captured parent media screenshot (%d bytes)", len(screenshot_bytes))
+                        except Exception:
+                            pass
 
-            # Screenshot the parent tweet's media (images, videos, cards)
-            # Look for media container
-            media = await parent_article.query_selector('[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="card.wrapper"]')
-            if media:
-                screenshot_bytes = await media.screenshot()
-            else:
-                # Screenshot the whole parent tweet article
-                screenshot_bytes = await parent_article.screenshot()
-
-            if screenshot_bytes:
-                import base64
-                mention["parent_screenshot"] = base64.b64encode(screenshot_bytes).decode("utf-8")
+            if parent_texts:
+                mention["parent_text"] = "\n\n".join(parent_texts)
                 logger.info(
-                    "Captured parent tweet screenshot for @%s (%d bytes)",
-                    mention["twitter_username"], len(screenshot_bytes),
+                    "Enriched mention %s with %d parent tweet(s)",
+                    mention["tweet_id"], len(parent_texts),
                 )
 
         except Exception as e:
-            logger.warning("Failed to enrich reply for tweet %s: %s", mention["tweet_id"], e)
+            logger.warning("Failed to enrich reply %s: %s", mention["tweet_id"], e)
 
         return mention
 
@@ -426,56 +263,40 @@ class TwitterMentionScraper:
                         data.get("build_id", "?"),
                     )
                 else:
-                    logger.warning(
-                        "Backend rejected mention: %s %s",
-                        resp.status_code, resp.text[:200],
-                    )
+                    logger.warning("Backend rejected mention: %s %s", resp.status_code, resp.text[:200])
         except Exception as e:
             logger.error("Failed to submit mention to backend: %s", e)
 
     async def _poll_loop(self):
-        """Main async loop: scrape mentions → submit to backend."""
+        """Main async loop: scrape Nitter → submit mentions to backend."""
         async with async_playwright() as pw:
             await self._ensure_browser(pw)
 
-            # Check / wait for login
-            if not await self._check_logged_in():
-                logged_in = await self._auto_login()
-                if not logged_in:
-                    logger.error("Cannot start scraper without X login")
-                    return
-
-            logger.info("Twitter scraper running — checking mentions every %ds", POLL_INTERVAL)
+            logger.info("Twitter scraper running via Nitter — checking every %ds (no login needed)", POLL_INTERVAL)
 
             while self._running:
                 try:
-                    # Scraping uses Playwright + httpx only — no GLM. Each successful ingest
-                    # starts a background pipeline on the server; many new mentions in one poll
-                    # means many concurrent pipelines unless GLM_MAX_CONCURRENT_REQUESTS caps API use.
                     mentions = await self._scrape_mentions()
                     for m in mentions:
                         self._seen_tweet_ids.add(m["tweet_id"])
-                        # If the mention text is short (e.g. "Build me" or "Build me this"),
-                        # it's likely a reply to another tweet — screenshot the parent
+                        # Enrich replies with parent context
                         prompt = m["tweet_text"].replace("@builddy", "").replace("@Builddy", "").strip()
                         if len(prompt) < 80 or "build" in prompt.lower():
                             m = await self._enrich_reply(m)
                         await self._submit_mention_to_backend(m)
 
                     if mentions:
-                        logger.info("Processed %d new mentions", len(mentions))
+                        logger.info("Processed %d new mentions via Nitter", len(mentions))
 
                 except Exception as e:
                     logger.error("Scraper poll error: %s", e)
 
                 await asyncio.sleep(POLL_INTERVAL)
 
-            # Cleanup
             if self._context:
                 await self._context.close()
 
     def _run_in_thread(self):
-        """Entry point for the background thread."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -486,7 +307,6 @@ class TwitterMentionScraper:
             loop.close()
 
     def start(self):
-        """Start the scraper in a background thread."""
         if self._running:
             return
         self._running = True
@@ -495,13 +315,7 @@ class TwitterMentionScraper:
         logger.info("Twitter scraper thread started")
 
     def stop(self):
-        """Signal the scraper to stop."""
         self._running = False
-        if self._thread:
-            self._thread.join(timeout=10)
-            self._thread = None
-        logger.info("Twitter scraper stopped")
 
 
-# Singleton
 scraper = TwitterMentionScraper()
