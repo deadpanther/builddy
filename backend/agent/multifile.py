@@ -242,7 +242,7 @@ async def generate_file(
                 on_chunk=_on_chunk,
                 temperature=0.5,
                 max_tokens=8192,
-                model=settings.GLM_FAST_MODEL,
+                model=settings.GLM_CODE_MODEL,
             ),
             timeout=FILE_TIMEOUT,
         )

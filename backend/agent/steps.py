@@ -176,7 +176,7 @@ async def generate_code(build_id: str, prompt: str, plan: str) -> str:
             })
             _last_publish_len = len(accumulated)
 
-    # Primary: streaming with fast model (most reliable + users see live output)
+    # Primary: streaming with code model (glm-4.7 — best for coding + live output)
     code = ""
     try:
         raw = await asyncio.wait_for(
@@ -188,7 +188,7 @@ async def generate_code(build_id: str, prompt: str, plan: str) -> str:
                 on_chunk=_on_chunk,
                 temperature=0.7,
                 max_tokens=16384,
-                model=settings.GLM_FAST_MODEL,
+                model=settings.GLM_CODE_MODEL,
             ),
             timeout=CODE_TIMEOUT,
         )

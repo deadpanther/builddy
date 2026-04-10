@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     GLM_API_KEY: str = ""
     GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4/"
     GLM_MODEL: str = "glm-5.1"               # Best model — used for planning, PRD, QA, review
-    GLM_FAST_MODEL: str = "glm-4.5"         # Higher concurrency (10) — used for bulk file generation
+    GLM_FAST_MODEL: str = "glm-4.5"         # Fast, reliable — used for streaming code gen
+    GLM_CODE_MODEL: str = "glm-4.7"        # Best coding model — used for code generation
     GLM_FALLBACK_MODEL: str = "glm-5"       # Fallback if primary is rate-limited
     GLM_VISION_MODEL: str = "glm-5v-turbo"
     GLM_IMAGE_MODEL: str = "cogView-4-250304"
