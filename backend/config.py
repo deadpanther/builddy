@@ -48,8 +48,8 @@ class Settings(BaseSettings):
     TWITTER_MAX_CONCURRENT_PIPELINES: int = 1
 
     # Post-processing agents
-    ENABLE_AUTOPILOT: bool = True            # Auto-fix runtime errors via headless browser loop
-    ENABLE_AUTO_TEST_GEN: bool = True        # Generate + deploy test suites after build
+    ENABLE_AUTOPILOT: bool = False           # Auto-fix runtime errors (burns extra GLM calls)
+    ENABLE_AUTO_TEST_GEN: bool = False       # Generate test suites after build (burns extra GLM calls)
 
     # Database
     DATABASE_URL: str = "sqlite:///./buildy.db"

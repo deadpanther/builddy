@@ -519,22 +519,11 @@ async def run_pipeline(build_id: str):
         parsed = await parse_request(build_id, tweet_text)
         prompt = parsed.get("prompt", tweet_text)
 
-        # Circuit breaker: if parse returned defaults, API is likely rate-limited.
-        # Skip expensive agents (PRD, Design, QA, Polish) and go direct to code gen.
-        api_degraded = (
-            parsed.get("app_name") == "my-app"
-            and parsed.get("aesthetic") == "minimal"
-            and not parsed.get("delight_features")
-        )
-        if api_degraded:
-            _add_step(build_id, "API appears rate-limited — using fast pipeline (skip PRD/Design/QA)")
-            logger.warning("Build %s: circuit breaker triggered, using fast pipeline", build_id)
-
         # Step 2: Classify complexity
         classification = await classify_complexity(build_id, prompt)
         complexity = classification.get("complexity", "simple")
 
-        if complexity in ("standard", "fullstack") and not api_degraded:
+        if complexity in ("standard", "fullstack"):
             # ── Multi-file pipeline ──
             logger.info("Build %s using %s pipeline", build_id, complexity)
 
@@ -557,47 +546,39 @@ async def run_pipeline(build_id: str):
             asyncio.create_task(_safe_thumbnail(build_id, prompt))
             logger.info("Build %s completed (fullstack): %s", build_id, deploy_url)
         else:
-            # ── Simple single-file pipeline ──
-            # When api_degraded, skip PRD/Design agents to save API calls
-            if api_degraded:
-                logger.info("Build %s using fast simple pipeline (api degraded)", build_id)
-                prd = {"user_stories": [], "edge_cases": [], "delight_features": []}
-                plan_prompt = prompt
-            else:
-                logger.info("Build %s using enhanced simple pipeline", build_id)
-                # PM Agent: Write PRD with acceptance criteria
-                prd = await write_prd(build_id, prompt)
-                # Design Agent: Create visual design system
-                design = await create_design_system(build_id, prompt, prd)
-                plan_prompt = (
-                    f"{prompt}\n\n"
-                    f"PRD: {json.dumps(prd, indent=2)[:3000]}\n\n"
-                    f"Design System: {json.dumps(design, indent=2)[:2000]}"
-                )
+            # ── Simple single-file pipeline with multi-agent quality ──
+            logger.info("Build %s using enhanced simple pipeline", build_id)
 
-            # Plan
+            # PM Agent: Write PRD with acceptance criteria
+            prd = await write_prd(build_id, prompt)
+
+            # Design Agent: Create visual design system
+            design = await create_design_system(build_id, prompt, prd)
+
+            # Plan (with web search + thinking + PRD + design context)
+            plan_prompt = (
+                f"{prompt}\n\n"
+                f"PRD: {json.dumps(prd, indent=2)[:3000]}\n\n"
+                f"Design System: {json.dumps(design, indent=2)[:2000]}"
+            )
             plan = await plan_app(build_id, plan_prompt)
 
-            # Generate code
+            # Generate code (with thinking + web search + component library)
             code = await generate_code(build_id, plan_prompt, plan)
 
-            # Quality agents — skip when API is degraded to save quota
-            if not api_degraded:
-                # QA Agent: Validate against PRD acceptance criteria
-                code = await qa_validate(build_id, code, prd)
+            # QA Agent: Validate against PRD acceptance criteria
+            code = await qa_validate(build_id, code, prd)
 
-                # Polish Agent: Animations, empty states, dark mode, micro-interactions
-                code = await polish_pass(build_id, code)
+            # Polish Agent: Animations, empty states, dark mode, micro-interactions
+            code = await polish_pass(build_id, code)
 
-                # Visual Feedback Loop: Browser screenshot -> GLM-5V fix
-                code = await visual_validate(build_id, code)
-            else:
-                _add_step(build_id, "Skipping QA/Polish/Visual agents (rate-limited mode)")
+            # Visual Feedback Loop: Browser screenshot → GLM-5V fix
+            code = await visual_validate(build_id, code)
 
             # Autopilot: Run in headless browser, detect errors, auto-fix
             app_name = parsed.get("app_name", "App")
 
-            if settings.ENABLE_AUTOPILOT and not api_degraded:
+            if settings.ENABLE_AUTOPILOT:
                 _add_step(build_id, "Running autopilot error detection...")
 
                 def _on_autopilot_iteration(iteration: int, errors_found: int, screenshot_available: bool):
