@@ -30,7 +30,7 @@ NITTER_HOSTS = [
     "nitter.privacydev.net",
 ]
 
-POLL_INTERVAL = 10  # seconds between checks
+POLL_INTERVAL = 40  # seconds between checks
 
 # Backend API base
 BACKEND_BASE = f"http://127.0.0.1:{settings.PORT}"
@@ -39,7 +39,9 @@ BACKEND_BASE = f"http://127.0.0.1:{settings.PORT}"
 IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 
 
-SEEN_IDS_FILE = Path(__file__).parent.parent / ".seen_tweet_ids"
+# Persist seen IDs on Railway volume (/app/data), or local backend dir
+_data_dir = Path(os.environ.get("DEPLOYED_DIR", "")).parent if os.environ.get("DEPLOYED_DIR") else Path(__file__).parent.parent
+SEEN_IDS_FILE = _data_dir / ".seen_tweet_ids"
 
 
 class TwitterMentionScraper:
