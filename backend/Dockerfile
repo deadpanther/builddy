@@ -42,6 +42,9 @@ COPY . .
 # Create deployed directory for build outputs
 RUN mkdir -p /app/deployed
 
+# Install Playwright Chromium for headless browser (Twitter scraper + visual validation)
+RUN python -m playwright install chromium && python -m playwright install-deps chromium
+
 # Expose FastAPI port
 EXPOSE 8000
 

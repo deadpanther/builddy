@@ -11,6 +11,7 @@ OAuth 1.0a, which the existing twitter.py service handles.
 
 import asyncio
 import logging
+import os
 import re
 import threading
 from pathlib import Path
@@ -25,6 +26,11 @@ logger = logging.getLogger(__name__)
 # Persistent browser state so we stay logged in across restarts
 BROWSER_STATE_DIR = Path(__file__).parent.parent / ".twitter_browser_state"
 BRAVE_PATH = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+
+# Detect environment: use Brave locally (macOS), Playwright Chromium on Railway/Linux
+import platform
+IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT")) or not Path(BRAVE_PATH).exists()
+IS_HEADLESS = IS_RAILWAY or platform.system() != "Darwin"
 
 # Backend API base
 BACKEND_BASE = f"http://127.0.0.1:{settings.PORT}"
@@ -46,16 +52,23 @@ class TwitterMentionScraper:
         self._page: Page | None = None
 
     async def _ensure_browser(self, pw):
-        """Launch Brave browser with persistent context (keeps login cookies)."""
+        """Launch browser with persistent context (keeps login cookies).
+
+        Uses Brave on macOS (local dev), Playwright Chromium on Railway/Linux.
+        """
         BROWSER_STATE_DIR.mkdir(parents=True, exist_ok=True)
 
-        self._context = await pw.chromium.launch_persistent_context(
-            user_data_dir=str(BROWSER_STATE_DIR),
-            headless=False,  # visible for hackathon demo
-            executable_path=BRAVE_PATH,
-            viewport={"width": 1280, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+        launch_kwargs = {
+            "user_data_dir": str(BROWSER_STATE_DIR),
+            "headless": IS_HEADLESS,
+            "viewport": {"width": 1280, "height": 900},
+            "args": ["--disable-blink-features=AutomationControlled"],
+        }
+        # Use Brave on macOS, Playwright's Chromium elsewhere
+        if not IS_RAILWAY and Path(BRAVE_PATH).exists():
+            launch_kwargs["executable_path"] = BRAVE_PATH
+
+        self._context = await pw.chromium.launch_persistent_context(**launch_kwargs)
         # Use existing page or create one
         if self._context.pages:
             self._page = self._context.pages[0]
