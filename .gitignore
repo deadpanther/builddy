@@ -4,7 +4,7 @@ venv/
 .venv/
 __pycache__/
 *.pyc
-uv.lock
+# uv.lock — tracked for reproducible Docker builds
 
 # Build outputs
 .next/
