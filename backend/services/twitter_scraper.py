@@ -91,22 +91,105 @@ class TwitterMentionScraper:
             logger.error("Login check failed: %s", e)
             return False
 
-    async def _wait_for_manual_login(self):
-        """Navigate to login page and wait for the user to log in manually."""
-        logger.warning(
-            "Not logged into @builddy on X. "
-            "Please log in manually in the browser window that just opened."
-        )
-        await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+    async def _auto_login(self) -> bool:
+        """Log into X automatically using credentials from env vars.
 
-        # Wait up to 5 minutes for login
-        for _ in range(60):
+        Falls back to waiting for manual login if credentials aren't set
+        or if Twitter presents a challenge (captcha, 2FA, etc).
+        """
+        username = settings.TWITTER_USERNAME
+        password = settings.TWITTER_PASSWORD
+
+        if not username or not password:
+            if IS_HEADLESS:
+                logger.error(
+                    "TWITTER_USERNAME and TWITTER_PASSWORD required for headless login. "
+                    "Set them in .env or Railway env vars."
+                )
+                return False
+            # Local dev: wait for manual login in visible browser
+            logger.warning("No Twitter credentials — please log in manually in the browser window.")
+            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+            for _ in range(60):
+                await self._page.wait_for_timeout(5000)
+                if await self._check_logged_in():
+                    logger.info("Successfully logged into X!")
+                    return True
+            logger.error("Timed out waiting for manual X login")
+            return False
+
+        # ── Auto-login flow ──
+        logger.info("Attempting auto-login to X as %s...", username)
+        try:
+            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+            await self._page.wait_for_timeout(2000)
+
+            # Step 1: Enter username/email
+            username_input = await self._page.wait_for_selector(
+                'input[autocomplete="username"], input[name="text"]',
+                timeout=10000,
+            )
+            await username_input.fill(username)
+            await self._page.wait_for_timeout(500)
+
+            # Click "Next"
+            next_btn = await self._page.query_selector('[role="button"]:has-text("Next")')
+            if next_btn:
+                await next_btn.click()
+            else:
+                await self._page.keyboard.press("Enter")
+            await self._page.wait_for_timeout(2000)
+
+            # Step 2: Check for unusual activity / phone verification challenge
+            challenge_input = await self._page.query_selector(
+                'input[data-testid="ocfEnterTextTextInput"]'
+            )
+            if challenge_input:
+                # Twitter is asking for phone/email verification
+                # Try entering the username/email as the verification answer
+                logger.warning("Twitter verification challenge detected — entering username as answer")
+                await challenge_input.fill(username)
+                verify_btn = await self._page.query_selector(
+                    '[data-testid="ocfEnterTextNextButton"], [role="button"]:has-text("Next")'
+                )
+                if verify_btn:
+                    await verify_btn.click()
+                await self._page.wait_for_timeout(2000)
+
+            # Step 3: Enter password
+            password_input = await self._page.wait_for_selector(
+                'input[name="password"], input[type="password"]',
+                timeout=10000,
+            )
+            await password_input.fill(password)
+            await self._page.wait_for_timeout(500)
+
+            # Click "Log in"
+            login_btn = await self._page.query_selector(
+                '[data-testid="LoginForm_Login_Button"], [role="button"]:has-text("Log in")'
+            )
+            if login_btn:
+                await login_btn.click()
+            else:
+                await self._page.keyboard.press("Enter")
+
+            # Wait for redirect to home
             await self._page.wait_for_timeout(5000)
+
             if await self._check_logged_in():
-                logger.info("Successfully logged into X!")
+                logger.info("Auto-login to X successful!")
                 return True
-        logger.error("Timed out waiting for manual X login")
-        return False
+
+            # Might have hit 2FA or captcha
+            logger.warning(
+                "Auto-login didn't reach home — Twitter may require 2FA or captcha. "
+                "Current URL: %s", self._page.url
+            )
+            return False
+
+        except Exception as e:
+            logger.error("Auto-login failed: %s", e)
+            return False
 
     async def _scrape_mentions(self) -> list[dict]:
         """Navigate to mentions tab and extract new tweets."""
@@ -258,7 +341,7 @@ class TwitterMentionScraper:
 
             # Check / wait for login
             if not await self._check_logged_in():
-                logged_in = await self._wait_for_manual_login()
+                logged_in = await self._auto_login()
                 if not logged_in:
                     logger.error("Cannot start scraper without X login")
                     return

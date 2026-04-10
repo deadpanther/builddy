@@ -39,7 +39,9 @@ class Settings(BaseSettings):
     GITHUB_TOKEN: str = ""  # for creating temp repos
     GITHUB_ORG: str = "builddy-apps"  # org/user for temp repos
 
-    # Twitter Scraper
+    # Twitter Scraper (Playwright-based login)
+    TWITTER_USERNAME: str = ""      # @handle or email for auto-login
+    TWITTER_PASSWORD: str = ""      # password for auto-login
     ENABLE_TWITTER_SCRAPER: bool = True
     # How many @builddy mention builds may run pipelines at once (each is dozens of GLM calls).
     # Set to 1 so a batch of mentions does not multiply rate limits on the same API key.
