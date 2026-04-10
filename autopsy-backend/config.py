@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     )
 
     GLM_API_KEY: str = ""
-    GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4/"
+    GLM_BASE_URL: str = "https://api.z.ai/api/coding/paas/v4/"
     GLM_MODEL: str = "glm-4.5"
     DATABASE_URL: str = "sqlite+aiosqlite:///./autopsy.db"
     CLONE_DIR: str = "/tmp/code-autopsy"
