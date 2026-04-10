@@ -80,20 +80,24 @@ class TwitterMentionScraper:
             self._page = await self._context.new_page()
 
     async def _check_logged_in(self) -> bool:
-        """Check if we're logged into X."""
+        """Check if we're logged into X using a SEPARATE tab so we don't
+        interrupt the user if they're manually logging in on the main page."""
+        check_page = None
         try:
-            await self._page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=15000)
-            await self._page.wait_for_timeout(3000)
-            url = self._page.url
-            # If redirected to login, we're not logged in
+            check_page = await self._context.new_page()
+            await check_page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=15000)
+            await check_page.wait_for_timeout(3000)
+            url = check_page.url
             if "login" in url or "flow" in url:
                 return False
-            # Check for the compose tweet button or home timeline
-            home_indicator = await self._page.query_selector('[data-testid="SideNav_NewTweet_Button"]')
+            home_indicator = await check_page.query_selector('[data-testid="SideNav_NewTweet_Button"]')
             return home_indicator is not None
         except Exception as e:
             logger.error("Login check failed: %s", e)
             return False
+        finally:
+            if check_page:
+                await check_page.close()
 
     async def _auto_login(self) -> bool:
         """Log into X automatically using credentials from env vars.
@@ -101,25 +105,33 @@ class TwitterMentionScraper:
         Falls back to waiting for manual login if credentials aren't set
         or if Twitter presents a challenge (captcha, 2FA, etc).
         """
-        username = settings.TWITTER_USERNAME
-        password = settings.TWITTER_PASSWORD
-
-        if not username or not password:
-            if IS_HEADLESS:
-                logger.error(
-                    "TWITTER_USERNAME and TWITTER_PASSWORD required for headless login. "
-                    "Set them in .env or Railway env vars."
-                )
-                return False
-            # Local dev: wait for manual login in visible browser
-            logger.warning("No Twitter credentials — please log in manually in the browser window.")
+        # Local dev (visible browser): always use manual login.
+        # Twitter's bot detection blocks automated login from Playwright,
+        # so we open the login page and let the user sign in manually.
+        # The persistent browser context saves cookies for future runs.
+        if not IS_HEADLESS:
+            logger.warning(
+                "Opening X login page — please log in manually in the browser window. "
+                "Your session will be saved for future runs."
+            )
             await self._page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
-            for _ in range(60):
+            for _ in range(60):  # wait up to 5 minutes
                 await self._page.wait_for_timeout(5000)
                 if await self._check_logged_in():
                     logger.info("Successfully logged into X!")
                     return True
             logger.error("Timed out waiting for manual X login")
+            return False
+
+        # Railway / headless: try automated login
+        username = settings.TWITTER_USERNAME
+        password = settings.TWITTER_PASSWORD
+
+        if not username or not password:
+            logger.error(
+                "TWITTER_USERNAME and TWITTER_PASSWORD required for headless login. "
+                "Set them in .env or Railway env vars."
+            )
             return False
 
         # ── Auto-login flow ──
