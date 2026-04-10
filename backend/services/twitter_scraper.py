@@ -268,12 +268,14 @@ class TwitterMentionScraper:
             await self._page.goto(tweet_url, wait_until="domcontentloaded", timeout=15000)
             await self._page.wait_for_timeout(3000)
 
-            # Refresh if needed
-            items = await self._page.query_selector_all(".timeline-item, .main-tweet, .reply")
+            # Refresh if needed (Nitter quirk)
+            items = await self._page.query_selector_all(".timeline-item")
             if not items:
                 await self._page.reload(wait_until="domcontentloaded", timeout=15000)
-                await self._page.wait_for_timeout(3000)
-                items = await self._page.query_selector_all(".timeline-item, .main-tweet, .reply")
+                await self._page.wait_for_timeout(4000)
+                items = await self._page.query_selector_all(".timeline-item")
+
+            logger.info("Thread for tweet %s: %d items", mention["tweet_id"], len(items))
 
             if len(items) < 2:
                 return mention  # No parent — single tweet, not a reply
@@ -349,6 +351,12 @@ class TwitterMentionScraper:
                 try:
                     mentions = await self._scrape_mentions()
 
+                    # Filter out @builddy's own tweets (promo tweets, not build requests)
+                    mentions = [
+                        m for m in mentions
+                        if m["twitter_username"].lower() not in ("builddy", "builddyai")
+                    ]
+
                     # Mark all as seen IMMEDIATELY (before submitting) to prevent
                     # duplicates if the next poll fires before submission finishes
                     for m in mentions:
@@ -358,9 +366,8 @@ class TwitterMentionScraper:
 
                     # Submit one at a time with delay to avoid GLM rate limit storms
                     for m in mentions:
-                        prompt = m["tweet_text"].replace("@builddy", "").replace("@Builddy", "").strip()
-                        if len(prompt) < 80 or "build" in prompt.lower():
-                            m = await self._enrich_reply(m)
+                        # Enrich ALL mentions with thread context (click into each tweet)
+                        m = await self._enrich_reply(m)
                         await self._submit_mention_to_backend(m)
                         # Wait between submissions so builds don't all hit GLM at once
                         await asyncio.sleep(5)
