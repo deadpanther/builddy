@@ -370,11 +370,14 @@ class TwitterMentionScraper:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    logger.info(
-                        "Submitted mention from @%s → build %s",
-                        mention["twitter_username"],
-                        data.get("build_id", "?"),
-                    )
+                    if data.get("status") == "duplicate":
+                        logger.debug("Skipped duplicate mention: tweet %s", mention["tweet_id"])
+                    else:
+                        logger.info(
+                            "Submitted mention from @%s → build %s",
+                            mention["twitter_username"],
+                            data.get("build_id", "?"),
+                        )
                 else:
                     logger.warning("Backend rejected mention: %s %s", resp.status_code, resp.text[:200])
         except Exception as e:
@@ -384,6 +387,19 @@ class TwitterMentionScraper:
         """Main async loop: scrape Nitter → submit mentions to backend."""
         async with async_playwright() as pw:
             await self._ensure_browser(pw)
+
+            # Pre-seed seen IDs from the database (mentions already ingested)
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(f"{BACKEND_BASE}/api/twitter/mentions", timeout=5.0)
+                    if resp.status_code == 200:
+                        for m in resp.json():
+                            tid = m.get("tweet_id")
+                            if tid:
+                                self._seen_tweet_ids.add(tid)
+                        logger.info("Pre-seeded %d seen tweet IDs from database", len(self._seen_tweet_ids))
+            except Exception:
+                logger.debug("Could not pre-seed seen IDs from database (endpoint may not exist)")
 
             logger.info("Twitter scraper running via Nitter — checking every %ds (no login needed)", POLL_INTERVAL)
 
