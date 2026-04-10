@@ -161,10 +161,13 @@ class TwitterMentionScraper:
                     return False
 
             await username_input.click()
-            await username_input.fill(username)
-            await self._page.wait_for_timeout(800)
+            # Use type() instead of fill() — simulates real keystrokes so Twitter
+            # enables the Next button (fill() doesn't trigger input events properly)
+            await username_input.type(username, delay=50)
+            await self._page.wait_for_timeout(1000)
 
-            # Click "Next" button
+            # Click "Next" button — use JS click as fallback since normal click
+            # sometimes doesn't register on Twitter's React buttons
             next_btn = None
             for sel in ['[role="button"]:has-text("Next")', 'button:has-text("Next")', '[data-testid="LoginForm_Next_Button"]']:
                 next_btn = await self._page.query_selector(sel)
@@ -172,12 +175,13 @@ class TwitterMentionScraper:
                     logger.info("Found Next button with selector: %s", sel)
                     break
             if next_btn:
-                await next_btn.click()
-                logger.info("Clicked Next button")
+                # Try JS click first (more reliable on SPAs), fall back to regular click
+                await next_btn.evaluate("el => el.click()")
+                logger.info("Clicked Next button via JS")
             else:
                 logger.info("No Next button found, pressing Enter")
                 await self._page.keyboard.press("Enter")
-            await self._page.wait_for_timeout(4000)
+            await self._page.wait_for_timeout(5000)
 
             logger.info("After Next — URL: %s", self._page.url)
 
@@ -222,8 +226,8 @@ class TwitterMentionScraper:
                 return False
 
             await password_input.click()
-            await password_input.fill(password)
-            await self._page.wait_for_timeout(800)
+            await password_input.type(password, delay=30)
+            await self._page.wait_for_timeout(1000)
 
             # Click "Log in" button
             login_btn = None
@@ -232,7 +236,8 @@ class TwitterMentionScraper:
                 if login_btn:
                     break
             if login_btn:
-                await login_btn.click()
+                await login_btn.evaluate("el => el.click()")
+                logger.info("Clicked Log in button via JS")
             else:
                 await self._page.keyboard.press("Enter")
 
