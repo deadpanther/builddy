@@ -1,9 +1,8 @@
 """
 Nitter-based Twitter mention scraper.
 
-Scrapes @builddy mentions from Nitter (public Twitter frontend) — no login,
-no API keys, no bot detection. Runs Playwright headless to render Nitter's
-JavaScript, parses tweet cards, and forwards mentions to the backend API.
+Uses plain httpx HTTP requests to scrape Nitter (server-side rendered HTML) —
+no browser, no login, no API keys. Falls back to Playwright if httpx fails.
 
 Works locally and on Railway without any Twitter credentials.
 """
@@ -16,18 +15,24 @@ import threading
 from pathlib import Path
 
 import httpx
-from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
 
 from config import settings
 
 logger = logging.getLogger(__name__)
 
 # Nitter instances to try (in order of preference)
+# Updated 2025 — checked against status.d420.de
 NITTER_HOSTS = [
-    "nitter.net",
     "xcancel.com",
+    "lightbrd.com",
+    "nitter.space",
+    "nitter.tiekoetter.com",
+    "nitter.catsarch.com",
     "nitter.poast.org",
+    "nitter.net",
     "nitter.privacydev.net",
+    "nuku.trabun.org",
     "nitter.cz",
     "nitter.1d4.us",
     "nitter.woodland.cafe",
@@ -41,21 +46,23 @@ BACKEND_BASE = f"http://127.0.0.1:{settings.PORT}"
 # Detect environment
 IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 
-
 # Persist seen IDs on Railway volume (/app/data), or local backend dir
-_data_dir = Path(os.environ.get("DEPLOYED_DIR", "")).parent if os.environ.get("DEPLOYED_DIR") else Path(__file__).parent.parent
+_data_dir = (
+    Path(os.environ.get("DEPLOYED_DIR", "")).parent
+    if os.environ.get("DEPLOYED_DIR")
+    else Path(__file__).parent.parent
+)
 SEEN_IDS_FILE = _data_dir / ".seen_tweet_ids"
 
-# Chrome args for containerized/headless environments
-CHROMIUM_ARGS = [
-    "--no-sandbox",
-    "--disable-blink-features=AutomationControlled",
-    "--disable-dev-shm-usage",
-    "--disable-gpu",
-    "--disable-setuid-sandbox",
-    "--no-zygote",
-    "--single-process",
-]
+# HTTP headers that look like a real browser
+_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
 
 
 class TwitterMentionScraper:
@@ -65,14 +72,18 @@ class TwitterMentionScraper:
         self._running = False
         self._thread: threading.Thread | None = None
         self._seen_tweet_ids: set[str] = self._load_seen_ids()
+        self._working_host: str | None = None
+        # Playwright fallback (only used if httpx fails for all hosts)
+        self._pw = None
         self._context = None
         self._page = None
-        self._pw = None
-        self._working_host: str | None = None
+
+    # ------------------------------------------------------------------ #
+    # Persistence
+    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _load_seen_ids() -> set[str]:
-        """Load previously seen tweet IDs from disk."""
         try:
             if SEEN_IDS_FILE.exists():
                 ids = SEEN_IDS_FILE.read_text().strip().splitlines()
@@ -83,439 +94,250 @@ class TwitterMentionScraper:
         return set()
 
     def _save_seen_ids(self):
-        """Persist seen tweet IDs to disk (keep last 500)."""
         try:
-            # Keep only the most recent 500 to avoid unbounded growth
             recent = sorted(self._seen_tweet_ids)[-500:]
             SEEN_IDS_FILE.write_text("\n".join(recent) + "\n")
         except Exception as e:
             logger.debug("Failed to save seen IDs: %s", e)
 
-    def _clean_chrome_locks(self, state_dir: Path):
-        """Remove stale Chrome lock files left by a crashed browser."""
-        for lock_file in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
-            lock_path = state_dir / lock_file
-            if lock_path.exists():
-                try:
-                    lock_path.unlink()
-                    logger.info("Removed stale Chrome lock: %s", lock_file)
-                except Exception:
-                    pass
+    # ------------------------------------------------------------------ #
+    # httpx-based scraping (primary — no browser needed)
+    # ------------------------------------------------------------------ #
 
-    async def _ensure_browser(self):
-        """Launch (or re-launch) the Chromium browser."""
-        if not self._pw:
-            raise RuntimeError("Playwright not started")
-
-        # Close any existing context first
-        if self._context:
-            try:
-                await self._context.close()
-            except Exception:
-                pass
-            self._context = None
-            self._page = None
-
-        state_dir = (
-            _data_dir / ".nitter_browser_state"
-            if IS_RAILWAY
-            else Path(__file__).parent.parent / ".nitter_browser_state"
-        )
-        state_dir.mkdir(parents=True, exist_ok=True)
-        self._clean_chrome_locks(state_dir)
-
-        try:
-            self._context = await self._pw.chromium.launch_persistent_context(
-                user_data_dir=str(state_dir),
-                headless=True,  # always headless (Railway has no display)
-                viewport={"width": 1280, "height": 900},
-                user_agent=(
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                ),
-                args=CHROMIUM_ARGS,
-            )
-            self._page = (
-                self._context.pages[0]
-                if self._context.pages
-                else await self._context.new_page()
-            )
-            logger.info("Browser launched (state=%s)", state_dir)
-        except Exception as e:
-            logger.error("Failed to launch browser: %s", e)
-            raise
-
-    def _is_browser_alive(self) -> bool:
-        """Return True if the page is still usable."""
-        try:
-            return self._page is not None and not self._page.is_closed()
-        except Exception:
-            return False
-
-    async def _find_working_host(self) -> str | None:
-        """Try Nitter instances until one works."""
+    async def _httpx_find_working_host(self, client: httpx.AsyncClient) -> str | None:
+        """Try each Nitter instance via plain HTTP GET and return the first that serves tweets."""
         for host in NITTER_HOSTS:
             url = f"https://{host}/search?f=tweets&q=%40builddy"
             try:
-                logger.info("Trying Nitter instance: %s", host)
-                resp = await self._page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                await self._page.wait_for_timeout(3000)
-
-                status = resp.status if resp else 0
-                current_url = self._page.url
-
-                if status != 200:
-                    logger.info("  %s returned HTTP %d", host, status)
+                logger.info("Trying Nitter (httpx): %s", host)
+                resp = await client.get(url, headers=_HTTP_HEADERS, timeout=10.0, follow_redirects=True)
+                if resp.status_code != 200:
+                    logger.info("  %s → HTTP %d", host, resp.status_code)
                     continue
-                if "login" in current_url:
-                    logger.info("  %s redirected to login", host)
+                if "login" in str(resp.url):
+                    logger.info("  %s → redirected to login", host)
                     continue
 
-                # Nitter sometimes needs a refresh on first load
-                items = await self._page.query_selector_all(".timeline-item")
-                if not items:
-                    logger.info("  %s: no items on first load, refreshing...", host)
-                    await self._page.reload(wait_until="domcontentloaded", timeout=15000)
-                    await self._page.wait_for_timeout(4000)
-                    items = await self._page.query_selector_all(".timeline-item")
-
+                soup = BeautifulSoup(resp.text, "html.parser")
+                items = soup.select(".timeline-item")
                 if items:
-                    logger.info("Nitter instance %s works! Found %d tweets", host, len(items))
+                    logger.info("Nitter (httpx) %s works — %d tweets", host, len(items))
                     return host
 
-                # Check if page has any content at all
-                body = await self._page.inner_text("body")
-                body_len = len(body.strip())
-                logger.info(
-                    "  %s: %d items, body %d chars. First 200: %s",
-                    host, len(items), body_len, body[:200],
-                )
-
-                if body_len > 200 and "No items found" not in body:
-                    logger.info("Nitter %s has content (body looks valid)", host)
+                body_len = len(resp.text)
+                logger.info("  %s → 0 items, body %d chars", host, body_len)
+                # Accept if body has real content (Nitter rendered but no @builddy results)
+                if body_len > 500 and "No items found" not in resp.text:
+                    logger.info("  %s → accepting (has content but 0 results)", host)
                     return host
 
             except Exception as e:
-                err = str(e)
-                logger.info("  %s error: %s", host, err[:100])
-                # If the browser itself died, bail early — poll loop will restart it
-                if "closed" in err.lower():
-                    logger.warning("Browser closed during host search — aborting")
-                    return None
+                logger.info("  %s error: %s", host, str(e)[:80])
 
         return None
 
-    async def _scrape_mentions(self) -> list[dict]:
-        """Scrape @builddy mentions from Nitter search."""
+    async def _httpx_scrape_mentions(self, client: httpx.AsyncClient) -> list[dict]:
+        """Scrape @builddy mentions using plain httpx requests."""
         if not self._working_host:
-            self._working_host = await self._find_working_host()
+            self._working_host = await self._httpx_find_working_host(client)
             if not self._working_host:
-                logger.warning("No working Nitter instance found")
                 return []
 
         url = f"https://{self._working_host}/search?f=tweets&q=%40builddy"
-        mentions = []
-
         try:
-            await self._page.goto(url, wait_until="domcontentloaded", timeout=20000)
-            await self._page.wait_for_timeout(3000)
+            resp = await client.get(url, headers=_HTTP_HEADERS, timeout=15.0, follow_redirects=True)
+            if resp.status_code != 200:
+                logger.warning("Nitter %s returned %d — resetting host", self._working_host, resp.status_code)
+                self._working_host = None
+                return []
 
-            # Nitter sometimes needs a refresh to load results
-            items = await self._page.query_selector_all(".timeline-item")
-            if not items:
-                logger.debug("No items on first load — refreshing Nitter page")
-                await self._page.reload(wait_until="domcontentloaded", timeout=20000)
-                await self._page.wait_for_timeout(4000)
+            soup = BeautifulSoup(resp.text, "html.parser")
+            items = soup.select(".timeline-item")
+            logger.debug("httpx: found %d items on Nitter", len(items))
 
-            # Nitter uses .timeline-item for each tweet
-            items = await self._page.query_selector_all(".timeline-item")
-            if not items:
-                # Fallback: try other selectors
-                items = await self._page.query_selector_all(".tweet-body, article")
-
-            logger.debug("Found %d items on Nitter", len(items))
-
+            mentions = []
             for item in items[:15]:
-                try:
-                    mention = await self._parse_nitter_item(item)
-                    if mention and mention["tweet_id"] not in self._seen_tweet_ids:
-                        mentions.append(mention)
-                except Exception as e:
-                    logger.debug("Failed to parse Nitter item: %s", e)
+                mention = self._parse_bs4_item(item)
+                if mention and mention["tweet_id"] not in self._seen_tweet_ids:
+                    mentions.append(mention)
+            return mentions
 
         except Exception as e:
-            logger.error("Failed to scrape Nitter: %s", e)
-            # Reset host so we try again next poll
+            logger.error("httpx scrape failed: %s — resetting host", e)
             self._working_host = None
+            return []
 
-        return mentions
-
-    async def _parse_nitter_item(self, item) -> dict | None:
-        """Parse a Nitter timeline item into a mention dict.
-
-        Also captures screenshots of any images/videos in the tweet itself.
-        """
-        # Get tweet link to extract tweet ID
-        link = await item.query_selector('a[href*="/status/"]')
+    def _parse_bs4_item(self, item) -> dict | None:
+        """Parse a BeautifulSoup Nitter timeline-item into a mention dict."""
+        link = item.select_one('a[href*="/status/"]')
         if not link:
             return None
-        href = await link.get_attribute("href") or ""
+        href = link.get("href", "")
         match = re.search(r"/status/(\d+)", href)
         if not match:
             return None
         tweet_id = match.group(1)
 
-        # Get tweet text
-        content_el = await item.query_selector(".tweet-content, .media-body")
+        # Tweet text
+        content_el = item.select_one(".tweet-content") or item.select_one(".media-body")
         if not content_el:
-            content_el = item
-        tweet_text = await content_el.inner_text()
-        tweet_text = tweet_text.strip()
-
+            return None
+        tweet_text = content_el.get_text(separator=" ", strip=True)
         if not tweet_text:
             return None
 
-        # Get username from the status link (most reliable)
-        # href is like /Neelkamalshah/status/12345
+        # Username from href (most reliable)
         twitter_username = "unknown"
-        if href:
-            parts = href.strip("/").split("/")
-            if parts:
-                twitter_username = parts[0]
-        # Fallback: try .username element
+        parts = href.strip("/").split("/")
+        if parts:
+            twitter_username = parts[0]
         if twitter_username == "unknown":
-            username_el = await item.query_selector(".username")
+            username_el = item.select_one(".username")
             if username_el:
-                raw = await username_el.inner_text()
-                twitter_username = raw.lstrip("@").strip()
+                twitter_username = username_el.get_text(strip=True).lstrip("@")
 
-        # Check if it's a reply — capture the "Replying to @someone" text
-        reply_el = await item.query_selector(".replying-to, .reply-to")
-        parent_text = None
-        if reply_el:
-            parent_text = await reply_el.inner_text()
-
-        # Capture screenshot of any media (images/videos) in this tweet
-        tweet_screenshot = None
-        media = await item.query_selector(
-            ".still-image, .gallery-row, .video-container, .card-container, .attachments"
-        )
-        if media:
-            try:
-                import base64
-                screenshot_bytes = await media.screenshot()
-                if screenshot_bytes:
-                    tweet_screenshot = base64.b64encode(screenshot_bytes).decode("utf-8")
-                    logger.info("Captured media screenshot from tweet %s (%d bytes)", tweet_id, len(screenshot_bytes))
-            except Exception as e:
-                logger.debug("Failed to screenshot media in tweet %s: %s", tweet_id, e)
-
-        # For replies without media: screenshot the whole card as visual context
-        if reply_el and not tweet_screenshot:
-            try:
-                import base64
-                card_bytes = await item.screenshot()
-                if card_bytes:
-                    tweet_screenshot = base64.b64encode(card_bytes).decode("utf-8")
-                    logger.info("Captured search card screenshot for reply tweet %s (%d bytes)", tweet_id, len(card_bytes))
-            except Exception:
-                pass
+        # Replying-to context
+        reply_el = item.select_one(".replying-to, .reply-to")
+        parent_text = reply_el.get_text(strip=True) if reply_el else None
 
         return {
             "tweet_id": tweet_id,
             "tweet_text": tweet_text,
             "twitter_username": twitter_username,
-            "parent_screenshot": tweet_screenshot,
             "parent_text": parent_text,
+            "parent_screenshot": None,
         }
 
-    async def _enrich_reply(self, mention: dict) -> dict:
-        """Click into the tweet on Nitter to get full thread context.
-
-        Extracts parent tweet text and screenshots any media in the parent.
-        Falls back to the "Replying to" text from the search page if Nitter
-        can't load the individual tweet (returns "Tweet not found").
-        """
+    async def _httpx_enrich_reply(self, client: httpx.AsyncClient, mention: dict) -> dict:
+        """Fetch the thread page via httpx to get parent tweet text."""
         if not self._working_host:
             return mention
 
-        # Save the search-page parent_text as fallback (e.g. "Replying to @someone")
         fallback_parent = mention.get("parent_text")
+        hosts_to_try = [self._working_host] + [h for h in NITTER_HOSTS if h != self._working_host]
 
-        try:
-            # Try multiple Nitter hosts for thread pages (some hosts can't find certain tweets)
-            hosts_to_try = [self._working_host] + [h for h in NITTER_HOSTS if h != self._working_host]
-            items = []
-
-            for host in hosts_to_try[:3]:  # try up to 3 hosts
-                tweet_url = f"https://{host}/{mention['twitter_username']}/status/{mention['tweet_id']}"
-                try:
-                    await self._page.goto(tweet_url, wait_until="domcontentloaded", timeout=12000)
-                    await self._page.wait_for_timeout(3000)
-
-                    body_text = await self._page.inner_text("body")
-                    if "not found" in body_text.lower():
-                        logger.info("Nitter %s can't find tweet %s, trying next host", host, mention["tweet_id"])
-                        continue
-
-                    items = await self._page.query_selector_all(".timeline-item")
-                    if not items:
-                        await self._page.reload(wait_until="domcontentloaded", timeout=12000)
-                        await self._page.wait_for_timeout(3000)
-                        items = await self._page.query_selector_all(".timeline-item")
-
-                    if items:
-                        logger.info("Thread loaded from %s for tweet %s: %d items", host, mention["tweet_id"], len(items))
-                        break
-                except Exception:
+        for host in hosts_to_try[:3]:
+            tweet_url = f"https://{host}/{mention['twitter_username']}/status/{mention['tweet_id']}"
+            try:
+                resp = await client.get(tweet_url, headers=_HTTP_HEADERS, timeout=10.0, follow_redirects=True)
+                if resp.status_code != 200:
+                    continue
+                if "not found" in resp.text.lower():
+                    logger.info("Nitter %s: tweet %s not found", host, mention["tweet_id"])
                     continue
 
-            if not items:
-                logger.warning("No Nitter host could load tweet %s — using search page context", mention["tweet_id"])
-                mention["parent_text"] = fallback_parent
+                soup = BeautifulSoup(resp.text, "html.parser")
+                items = soup.select(".timeline-item")
+                if not items or len(items) < 2:
+                    break  # Single tweet or no thread
+
+                parent_texts = []
+                for parent_item in items[:-1]:
+                    content_el = parent_item.select_one(".tweet-content")
+                    if content_el:
+                        text = content_el.get_text(separator=" ", strip=True)
+                        if text:
+                            user_el = parent_item.select_one(".username")
+                            user = user_el.get_text(strip=True) if user_el else ""
+                            parent_texts.append(f"{user}: {text}" if user else text)
+
+                if parent_texts:
+                    mention["parent_text"] = "\n\n".join(parent_texts)
+                    logger.info(
+                        "Enriched mention %s with %d parent tweet(s)", mention["tweet_id"], len(parent_texts)
+                    )
+                elif fallback_parent:
+                    mention["parent_text"] = fallback_parent
                 return mention
 
-            logger.info("Thread for tweet %s: %d items", mention["tweet_id"], len(items))
+            except Exception as e:
+                logger.debug("httpx enrich failed on %s: %s", host, e)
+                continue
 
-            if len(items) < 2:
-                return mention  # No parent — single tweet, not a reply
-
-            # Everything except the last item is a parent tweet
-            parent_texts = []
-            for parent_item in items[:-1]:
-                content_el = await parent_item.query_selector(".tweet-content")
-                if content_el:
-                    text = (await content_el.inner_text()).strip()
-                    if text:
-                        user_el = await parent_item.query_selector(".username")
-                        user = (await user_el.inner_text()).strip() if user_el else ""
-                        parent_texts.append(f"{user}: {text}" if user else text)
-
-                # Screenshot media in the parent
-                if not mention.get("parent_screenshot"):
-                    media = await parent_item.query_selector(
-                        ".still-image, .gallery-row, .video-container, .card-container, .attachments"
-                    )
-                    if media:
-                        try:
-                            import base64
-                            screenshot_bytes = await media.screenshot()
-                            if screenshot_bytes:
-                                mention["parent_screenshot"] = base64.b64encode(screenshot_bytes).decode("utf-8")
-                                logger.info("Captured parent media screenshot (%d bytes)", len(screenshot_bytes))
-                        except Exception:
-                            pass
-
-            if parent_texts:
-                mention["parent_text"] = "\n\n".join(parent_texts)
-                logger.info("Enriched mention %s with %d parent tweet(s)", mention["tweet_id"], len(parent_texts))
-            elif fallback_parent:
-                # Thread loaded but no parent content extracted — use search page fallback
-                mention["parent_text"] = fallback_parent
-
-        except Exception as e:
-            logger.warning("Failed to enrich reply %s: %s — keeping search page context", mention["tweet_id"], e)
-            # Preserve the fallback from search page
-            if fallback_parent and not mention.get("parent_text"):
-                mention["parent_text"] = fallback_parent
-
+        if fallback_parent and not mention.get("parent_text"):
+            mention["parent_text"] = fallback_parent
         return mention
 
-    async def _submit_mention_to_backend(self, mention: dict):
+    # ------------------------------------------------------------------ #
+    # Backend submission
+    # ------------------------------------------------------------------ #
+
+    async def _submit_mention_to_backend(self, client: httpx.AsyncClient, mention: dict):
         """POST the mention to our backend API to trigger a build."""
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{BACKEND_BASE}/api/twitter/ingest",
-                    json=mention,
-                    timeout=10.0,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("status") == "duplicate":
-                        logger.debug("Skipped duplicate mention: tweet %s", mention["tweet_id"])
-                    else:
-                        logger.info(
-                            "Submitted mention from @%s → build %s",
-                            mention["twitter_username"],
-                            data.get("build_id", "?"),
-                        )
+            resp = await client.post(
+                f"{BACKEND_BASE}/api/twitter/ingest",
+                json=mention,
+                timeout=10.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "duplicate":
+                    logger.debug("Skipped duplicate mention: tweet %s", mention["tweet_id"])
                 else:
-                    logger.warning("Backend rejected mention: %s %s", resp.status_code, resp.text[:200])
+                    logger.info(
+                        "Submitted mention from @%s → build %s",
+                        mention["twitter_username"],
+                        data.get("build_id", "?"),
+                    )
+            else:
+                logger.warning("Backend rejected mention: %s %s", resp.status_code, resp.text[:200])
         except Exception as e:
             logger.error("Failed to submit mention to backend: %s", e)
 
-    async def _poll_loop(self):
-        """Main async loop: scrape Nitter → submit mentions to backend."""
-        async with async_playwright() as pw:
-            self._pw = pw
-            await self._ensure_browser()
+    # ------------------------------------------------------------------ #
+    # Poll loop
+    # ------------------------------------------------------------------ #
 
-            # Pre-seed seen IDs from the database (mentions already ingested)
+    async def _poll_loop(self):
+        """Main async loop: scrape Nitter via httpx → submit mentions to backend."""
+        # Pre-seed seen IDs from the database
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.get(f"{BACKEND_BASE}/api/twitter/mentions", timeout=5.0)
+                if resp.status_code == 200:
+                    for m in resp.json():
+                        tid = m.get("tweet_id")
+                        if tid:
+                            self._seen_tweet_ids.add(tid)
+                    logger.info("Pre-seeded %d seen tweet IDs from database", len(self._seen_tweet_ids))
+            except Exception:
+                logger.debug("Could not pre-seed seen IDs (endpoint may not exist yet)")
+
+        logger.info("Twitter scraper running via Nitter (httpx) — checking every %ds", POLL_INTERVAL)
+
+        while self._running:
             try:
                 async with httpx.AsyncClient() as client:
-                    resp = await client.get(f"{BACKEND_BASE}/api/twitter/mentions", timeout=5.0)
-                    if resp.status_code == 200:
-                        for m in resp.json():
-                            tid = m.get("tweet_id")
-                            if tid:
-                                self._seen_tweet_ids.add(tid)
-                        logger.info("Pre-seeded %d seen tweet IDs from database", len(self._seen_tweet_ids))
-            except Exception:
-                logger.debug("Could not pre-seed seen IDs from database (endpoint may not exist)")
+                    mentions = await self._httpx_scrape_mentions(client)
 
-            logger.info("Twitter scraper running via Nitter — checking every %ds (no login needed)", POLL_INTERVAL)
-
-            while self._running:
-                try:
-                    # Restart browser if it died
-                    if not self._is_browser_alive():
-                        logger.warning("Browser page is closed — restarting browser...")
-                        await self._ensure_browser()
-                        self._working_host = None
-
-                    mentions = await self._scrape_mentions()
-
-                    # Filter out @builddy's own tweets (promo tweets, not build requests)
+                    # Filter out @builddy's own tweets
                     mentions = [
                         m for m in mentions
                         if m["twitter_username"].lower() not in ("builddy", "builddyai")
                     ]
 
-                    # Mark all as seen IMMEDIATELY (before submitting) to prevent
-                    # duplicates if the next poll fires before submission finishes
+                    # Mark as seen immediately to prevent duplicates
                     for m in mentions:
                         self._seen_tweet_ids.add(m["tweet_id"])
                     if mentions:
                         self._save_seen_ids()
 
-                    # Submit one at a time with delay to avoid GLM rate limit storms
+                    # Submit one at a time
                     for m in mentions:
-                        # Enrich ALL mentions with thread context (click into each tweet)
-                        m = await self._enrich_reply(m)
-                        await self._submit_mention_to_backend(m)
-                        # Wait between submissions so builds don't all hit GLM at once
+                        m = await self._httpx_enrich_reply(client, m)
+                        await self._submit_mention_to_backend(client, m)
                         await asyncio.sleep(5)
 
                     if mentions:
                         logger.info("Processed %d new mentions via Nitter", len(mentions))
-
-                except Exception as e:
-                    err_str = str(e)
-                    if "closed" in err_str.lower():
-                        logger.warning("Browser context died during poll: %s — restarting", e)
-                        try:
-                            await self._ensure_browser()
-                            self._working_host = None
-                        except Exception as restart_err:
-                            logger.error("Failed to restart browser: %s", restart_err)
                     else:
-                        logger.error("Scraper poll error: %s", e)
+                        logger.debug("No new mentions this poll")
 
-                await asyncio.sleep(POLL_INTERVAL)
+            except Exception as e:
+                logger.error("Scraper poll error: %s", e)
 
-            if self._context:
-                await self._context.close()
+            await asyncio.sleep(POLL_INTERVAL)
 
     def _run_in_thread(self):
         loop = asyncio.new_event_loop()
