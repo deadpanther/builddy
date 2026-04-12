@@ -46,6 +46,17 @@ IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 _data_dir = Path(os.environ.get("DEPLOYED_DIR", "")).parent if os.environ.get("DEPLOYED_DIR") else Path(__file__).parent.parent
 SEEN_IDS_FILE = _data_dir / ".seen_tweet_ids"
 
+# Chrome args for containerized/headless environments
+CHROMIUM_ARGS = [
+    "--no-sandbox",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-setuid-sandbox",
+    "--no-zygote",
+    "--single-process",
+]
+
 
 class TwitterMentionScraper:
     """Scrapes @builddy mentions from Nitter — no Twitter login needed."""
@@ -56,6 +67,7 @@ class TwitterMentionScraper:
         self._seen_tweet_ids: set[str] = self._load_seen_ids()
         self._context = None
         self._page = None
+        self._pw = None
         self._working_host: str | None = None
 
     @staticmethod
@@ -79,24 +91,66 @@ class TwitterMentionScraper:
         except Exception as e:
             logger.debug("Failed to save seen IDs: %s", e)
 
-    async def _ensure_browser(self, pw):
-        """Launch a lightweight Chromium browser."""
-        # Use volume on Railway, local dir otherwise
-        state_dir = _data_dir / ".nitter_browser_state" if IS_RAILWAY else Path(__file__).parent.parent / ".nitter_browser_state"
+    def _clean_chrome_locks(self, state_dir: Path):
+        """Remove stale Chrome lock files left by a crashed browser."""
+        for lock_file in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+            lock_path = state_dir / lock_file
+            if lock_path.exists():
+                try:
+                    lock_path.unlink()
+                    logger.info("Removed stale Chrome lock: %s", lock_file)
+                except Exception:
+                    pass
+
+    async def _ensure_browser(self):
+        """Launch (or re-launch) the Chromium browser."""
+        if not self._pw:
+            raise RuntimeError("Playwright not started")
+
+        # Close any existing context first
+        if self._context:
+            try:
+                await self._context.close()
+            except Exception:
+                pass
+            self._context = None
+            self._page = None
+
+        state_dir = (
+            _data_dir / ".nitter_browser_state"
+            if IS_RAILWAY
+            else Path(__file__).parent.parent / ".nitter_browser_state"
+        )
         state_dir.mkdir(parents=True, exist_ok=True)
+        self._clean_chrome_locks(state_dir)
+
         try:
-            self._context = await pw.chromium.launch_persistent_context(
+            self._context = await self._pw.chromium.launch_persistent_context(
                 user_data_dir=str(state_dir),
-                headless=IS_RAILWAY,
+                headless=True,  # always headless (Railway has no display)
                 viewport={"width": 1280, "height": 900},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+                args=CHROMIUM_ARGS,
             )
-            self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
-            logger.info("Browser launched (headless=%s, state=%s)", IS_RAILWAY, state_dir)
+            self._page = (
+                self._context.pages[0]
+                if self._context.pages
+                else await self._context.new_page()
+            )
+            logger.info("Browser launched (state=%s)", state_dir)
         except Exception as e:
             logger.error("Failed to launch browser: %s", e)
             raise
+
+    def _is_browser_alive(self) -> bool:
+        """Return True if the page is still usable."""
+        try:
+            return self._page is not None and not self._page.is_closed()
+        except Exception:
+            return False
 
     async def _find_working_host(self) -> str | None:
         """Try Nitter instances until one works."""
@@ -132,14 +186,23 @@ class TwitterMentionScraper:
                 # Check if page has any content at all
                 body = await self._page.inner_text("body")
                 body_len = len(body.strip())
-                logger.info("  %s: %d items, body %d chars. First 200: %s", host, len(items), body_len, body[:200])
+                logger.info(
+                    "  %s: %d items, body %d chars. First 200: %s",
+                    host, len(items), body_len, body[:200],
+                )
 
                 if body_len > 200 and "No items found" not in body:
-                    logger.info("Nitter instance %s has content (no .timeline-item but body looks valid)", host)
+                    logger.info("Nitter %s has content (body looks valid)", host)
                     return host
 
             except Exception as e:
-                logger.info("  %s error: %s", host, str(e)[:100])
+                err = str(e)
+                logger.info("  %s error: %s", host, err[:100])
+                # If the browser itself died, bail early — poll loop will restart it
+                if "closed" in err.lower():
+                    logger.warning("Browser closed during host search — aborting")
+                    return None
+
         return None
 
     async def _scrape_mentions(self) -> list[dict]:
@@ -232,18 +295,6 @@ class TwitterMentionScraper:
         if reply_el:
             parent_text = await reply_el.inner_text()
 
-        # For replies: also screenshot the entire search result card
-        # (gives visual context when thread page returns "Tweet not found")
-        if reply_el and not tweet_screenshot:
-            try:
-                import base64
-                card_bytes = await item.screenshot()
-                if card_bytes:
-                    tweet_screenshot = base64.b64encode(card_bytes).decode("utf-8")
-                    logger.info("Captured search card screenshot for reply tweet %s (%d bytes)", tweet_id, len(card_bytes))
-            except Exception:
-                pass
-
         # Capture screenshot of any media (images/videos) in this tweet
         tweet_screenshot = None
         media = await item.query_selector(
@@ -259,11 +310,22 @@ class TwitterMentionScraper:
             except Exception as e:
                 logger.debug("Failed to screenshot media in tweet %s: %s", tweet_id, e)
 
+        # For replies without media: screenshot the whole card as visual context
+        if reply_el and not tweet_screenshot:
+            try:
+                import base64
+                card_bytes = await item.screenshot()
+                if card_bytes:
+                    tweet_screenshot = base64.b64encode(card_bytes).decode("utf-8")
+                    logger.info("Captured search card screenshot for reply tweet %s (%d bytes)", tweet_id, len(card_bytes))
+            except Exception:
+                pass
+
         return {
             "tweet_id": tweet_id,
             "tweet_text": tweet_text,
             "twitter_username": twitter_username,
-            "parent_screenshot": tweet_screenshot,  # media from THIS tweet (overridden by parent in _enrich_reply)
+            "parent_screenshot": tweet_screenshot,
             "parent_text": parent_text,
         }
 
@@ -386,7 +448,8 @@ class TwitterMentionScraper:
     async def _poll_loop(self):
         """Main async loop: scrape Nitter → submit mentions to backend."""
         async with async_playwright() as pw:
-            await self._ensure_browser(pw)
+            self._pw = pw
+            await self._ensure_browser()
 
             # Pre-seed seen IDs from the database (mentions already ingested)
             try:
@@ -405,6 +468,12 @@ class TwitterMentionScraper:
 
             while self._running:
                 try:
+                    # Restart browser if it died
+                    if not self._is_browser_alive():
+                        logger.warning("Browser page is closed — restarting browser...")
+                        await self._ensure_browser()
+                        self._working_host = None
+
                     mentions = await self._scrape_mentions()
 
                     # Filter out @builddy's own tweets (promo tweets, not build requests)
@@ -432,7 +501,16 @@ class TwitterMentionScraper:
                         logger.info("Processed %d new mentions via Nitter", len(mentions))
 
                 except Exception as e:
-                    logger.error("Scraper poll error: %s", e)
+                    err_str = str(e)
+                    if "closed" in err_str.lower():
+                        logger.warning("Browser context died during poll: %s — restarting", e)
+                        try:
+                            await self._ensure_browser()
+                            self._working_host = None
+                        except Exception as restart_err:
+                            logger.error("Failed to restart browser: %s", restart_err)
+                    else:
+                        logger.error("Scraper poll error: %s", e)
 
                 await asyncio.sleep(POLL_INTERVAL)
 
